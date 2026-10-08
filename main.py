@@ -14,6 +14,21 @@ def main():
     # Inicializar banco
     db.init_db()
 
+    if sys.stdout is None:  # pythonw / exe sem console: log em arquivo
+        log = open("data/app.log", "a", encoding="utf-8", buffering=1)
+        sys.stdout = sys.stderr = log
+
+    import inicializacao
+    if not inicializacao.garantir_instancia_unica():
+        print("[App] Já existe uma instância aberta; encerrando esta.")
+        if "--headless" not in sys.argv:
+            import tkinter as tk
+            from tkinter import messagebox
+            raiz = tk.Tk()
+            raiz.withdraw()
+            messagebox.showinfo("Repasse Telegram", "O app já está aberto (veja a barra de tarefas/bandeja).")
+        return
+
     if "--headless" in sys.argv:
         _run_headless()
         return
@@ -28,6 +43,9 @@ def main():
     # Janela principal
     from ui.main_window import MainWindow
     app = MainWindow()
+
+    if "--minimizado" in sys.argv or db.get_config("start_minimized", "0") == "1":
+        app.iconify()
 
     _start_engine()
     app.mainloop()
@@ -45,10 +63,6 @@ def _start_engine():
 
 def _run_headless():
     """Roda só o motor, sem interface (servidor/24h). Contas precisam ter sessão salva pela GUI."""
-    if sys.stdout is None:  # exe --windowed não tem console: loga em arquivo
-        log = open("data/headless.log", "a", encoding="utf-8", buffering=1)
-        sys.stdout = sys.stderr = log
-
     _start_engine()
     print("[Headless] Motor ativo. Ctrl+C para encerrar.")
     try:

@@ -28,6 +28,7 @@ class TelegramManager:
         self.clients: dict[int, TelegramClient] = {}       # conta_id -> client
         self._pending: dict[int, TelegramClient] = {}      # aguardando código
         self._handlers: dict[int, callable] = {}           # repasse_id -> handler fn
+        self._radar_handlers: dict[int, callable] = {}     # conta_id -> handler do radar
         self._daily_count: dict[int, dict] = {}            # repasse_id -> {date, count}
 
     # ── Loop ────────────────────────────────────────────────────────────────
@@ -303,14 +304,8 @@ class TelegramManager:
             current = db.get_repasse(repasse_id)
             if not current or not current["ativo"]:
                 return
-            print(f"[Repasse {current['descricao']}] nova mensagem de {current['origem_nome']}")
-
-            # Radar de preços: registra o preço de toda oferta da origem, mesmo que não seja repassada
-            try:
-                import radar
-                await radar.capturar(event.message, event.message.text or "", current["origem_nome"] or "")
-            except Exception as e:
-                print(f"[Radar] Falha ao registrar preço: {e}")
+            chat = await event.get_chat()
+            print(f"[Repasse {current['descricao']}] nova mensagem de {getattr(chat, 'title', event.chat_id)}")
 
             # Pausa global (painel do bot)
             if db.get_config("pausado", "0") == "1":
@@ -419,13 +414,21 @@ class TelegramManager:
                 if chaves:
                     db.marcar_ofertas(chaves)
 
-        # Registrar handler no source
-        try:
-            source_entity = await self.resolve_entity(client, r["origem_id"])
-            client.add_event_handler(_handler, events.NewMessage(chats=source_entity))
+        # Registrar handler em todas as origens do repasse
+        origens = db.listar_origens(repasse_id) or ([{"origem_id": r["origem_id"], "origem_nome": r["origem_nome"]}]
+                                                     if r["origem_id"] else [])
+        entidades = []
+        for o in origens:
+            try:
+                ent = await self.resolve_entity(client, o["origem_id"])
+                if isinstance(ent, (str, int)):
+                    raise ValueError("a conta não participa deste grupo/canal")
+                entidades.append(ent)
+            except Exception as e:
+                db.adicionar_historico(repasse_id, o["origem_nome"] or o["origem_id"], "Falha ao iniciar", str(e))
+        if entidades:
+            client.add_event_handler(_handler, events.NewMessage(chats=entidades))
             self._handlers[repasse_id] = _handler
-        except Exception as e:
-            db.adicionar_historico(repasse_id, "-", "Falha ao iniciar", str(e))
 
     async def _stop_repasse(self, repasse_id: int, conta_id: int):
         handler = self._handlers.pop(repasse_id, None)
@@ -439,17 +442,20 @@ class TelegramManager:
     async def _importar_historico(self, dias: int, progresso=None):
         """Importa as postagens antigas de cada canal de origem (uma vez por canal), pela conta do repasse."""
         import radar
-        origens = {}
-        for r in db.listar_repasses():
-            if r["origem_id"] and r["conta_id"] in self.clients:
-                origens.setdefault(r["origem_id"], r)
+        origens = {}  # chat_id -> (conta_id, nome)
+        for conta_id in self.clients:
+            for chat_id, nome in db.chats_do_radar(conta_id).items():
+                origens.setdefault(chat_id, (conta_id, nome))
         if not origens:
-            raise RuntimeError("Nenhum repasse com conta conectada para ler os canais de origem.")
+            raise RuntimeError("Nenhuma fonte do radar nem repasse ativo com conta conectada.")
         total_lidas = total_reg = 0
-        for i, (origem_id, r) in enumerate(origens.items(), 1):
-            nome = r["origem_nome"] or origem_id
-            client = self.clients[r["conta_id"]]
+        for i, (origem_id, (conta_id, nome)) in enumerate(origens.items(), 1):
+            nome = nome or origem_id
+            client = self.clients[conta_id]
             entity = await self.resolve_entity(client, origem_id)
+            if isinstance(entity, (str, int)):
+                print(f"[Radar] Sem acesso a {nome}; pulando.")
+                continue
 
             def _prog(lidas, reg, nome=nome, i=i):
                 if progresso:
@@ -540,17 +546,71 @@ class TelegramManager:
                 self.iniciar_repasse(r["id"])
 
     def restaurar_repasses_conta(self, conta_id: int):
-        """Reativa repasses ativos vinculados a uma conta específica."""
+        """Reativa repasses ativos da conta e o ouvinte do radar.
+        Sempre via _run (referência forte); create_task solto podia ser destruído pelo GC."""
         for r in db.listar_repasses():
             if r["ativo"] and r["conta_id"] == conta_id:
-                try:
-                    loop = asyncio.get_running_loop()
-                    if loop == self.loop:
-                        loop.create_task(self._start_repasse(r["id"]))
-                        continue
-                except RuntimeError:
-                    pass
                 self.iniciar_repasse(r["id"])
+        self.atualizar_radar(conta_id)
+
+    # ── Radar: ouvinte único por conta (fontes + origens dos repasses) ────────
+
+    async def _start_radar(self, conta_id: int):
+        client = self.clients.get(conta_id)
+        antigo = self._radar_handlers.pop(conta_id, None)
+        if client and antigo:
+            client.remove_event_handler(antigo)
+        if not client:
+            return
+        entidades = []
+        for chat_id, nome in db.chats_do_radar(conta_id).items():
+            try:
+                ent = await self.resolve_entity(client, chat_id)
+                if not isinstance(ent, (str, int)):
+                    entidades.append(ent)
+            except Exception as e:
+                print(f"[Radar] Não foi possível ouvir {nome}: {e}")
+        if not entidades:
+            return
+
+        async def _capturar(event):
+            import radar
+            try:
+                chat = await event.get_chat()
+                await radar.capturar(event.message, event.message.text or "", getattr(chat, "title", "") or "")
+            except Exception as e:
+                print(f"[Radar] Falha ao registrar preço: {e}")
+
+        client.add_event_handler(_capturar, events.NewMessage(chats=entidades))
+        self._radar_handlers[conta_id] = _capturar
+        print(f"[Radar] Monitorando {len(entidades)} canais/grupos.")
+
+    def atualizar_radar(self, conta_id: int = None):
+        """(Re)registra o ouvinte do radar — chamar após mudar fontes ou repasses."""
+        for cid in ([conta_id] if conta_id else list(self.clients)):
+            self._run(self._start_radar(cid))
+
+    async def _listar_chats(self, conta_id: int):
+        """Canais e grupos da conta com ID marcado (-100… / -…), sem ambiguidade com usuários."""
+        from telethon import utils
+        client = self.clients.get(conta_id)
+        if not client:
+            raise RuntimeError("Conta não conectada.")
+        chats = []
+        async for d in client.iter_dialogs():
+            if d.is_group or d.is_channel:
+                tipo = "Canal" if d.is_channel and not d.is_group else "Grupo"
+                chats.append({"id": str(utils.get_peer_id(d.entity)), "nome": d.name or "Sem nome", "tipo": tipo})
+        return chats
+
+    def listar_chats(self, conta_id: int, callback):
+        def _done(fut):
+            try:
+                callback(fut.result(), None)
+            except Exception as e:
+                callback([], str(e))
+
+        self._run(self._listar_chats(conta_id)).add_done_callback(_done)
 
 
 # Singleton global

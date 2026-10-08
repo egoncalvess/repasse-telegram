@@ -2,18 +2,18 @@ import customtkinter as ctk
 from tkinter import messagebox
 import database as db
 
-BTN_BLUE = ("#1a6fd4", "#1558ab")
+BTN_BLUE = ("#1747a6", "#123a88")
 BTN_GRAY = ("#64748b", "#4b5563")
 
 
 class ConfiguracoesFrame(ctk.CTkFrame):
     def __init__(self, parent):
-        super().__init__(parent, corner_radius=0, fg_color=("#f1f5fb", "#121212"))
+        super().__init__(parent, corner_radius=0, fg_color=("#f4f6fb", "#0f1115"))
         self._build()
 
     def _build(self):
         ctk.CTkLabel(self, text="Configurações",
-                     font=("Arial", 18, "bold")).pack(anchor="w", padx=24, pady=(20, 4))
+                     font=("Segoe UI", 18, "bold")).pack(anchor="w", padx=24, pady=(20, 4))
 
         # ── Tabs ──────────────────────────────────────────────────────────────
         tab = ctk.CTkTabview(self, corner_radius=12)
@@ -32,15 +32,15 @@ class ConfiguracoesFrame(ctk.CTkFrame):
     # ── API Telegram ──────────────────────────────────────────────────────────
 
     def _build_api_tab(self, parent):
-        card = ctk.CTkFrame(parent, fg_color=("white", "#1e1e1e"), corner_radius=12)
+        card = ctk.CTkFrame(parent, fg_color=("#ffffff", "#181b22"), corner_radius=12)
         card.pack(fill="both", expand=True, padx=8, pady=8)
 
         ctk.CTkLabel(card, text="Credenciais da API Telegram",
-                     font=("Arial", 15, "bold")).pack(anchor="w", padx=20, pady=(20, 4))
+                     font=("Segoe UI", 15, "bold")).pack(anchor="w", padx=20, pady=(20, 4))
 
         ctk.CTkLabel(card,
                      text="Obtenha em https://my.telegram.org → API development tools",
-                     font=("Arial", 11), text_color=("#64748b", "#94a3b8")).pack(anchor="w", padx=20)
+                     font=("Segoe UI", 11), text_color=("#64748b", "#94a3b8")).pack(anchor="w", padx=20)
 
         # API ID
         ctk.CTkLabel(card, text="API ID").pack(anchor="w", padx=20, pady=(16, 4))
@@ -75,7 +75,7 @@ class ConfiguracoesFrame(ctk.CTkFrame):
         warn.pack(fill="x", padx=20, pady=(0, 20))
         ctk.CTkLabel(warn,
                      text="⚠️  Nunca compartilhe sua API Hash. Ela dá acesso total à sua conta Telegram.",
-                     font=("Arial", 11), text_color=("#92400e", "#fcd34d"),
+                     font=("Segoe UI", 11), text_color=("#92400e", "#fcd34d"),
                      wraplength=600, justify="left").pack(padx=16, pady=10, anchor="w")
 
     def _save_api(self):
@@ -100,15 +100,15 @@ class ConfiguracoesFrame(ctk.CTkFrame):
     # ── Bot ───────────────────────────────────────────────────────────────────
 
     def _build_bot_tab(self, parent):
-        card = ctk.CTkFrame(parent, fg_color=("white", "#1e1e1e"), corner_radius=12)
+        card = ctk.CTkFrame(parent, fg_color=("#ffffff", "#181b22"), corner_radius=12)
         card.pack(fill="both", expand=True, padx=8, pady=8)
 
         ctk.CTkLabel(card, text="Bot de publicação e painel de controle",
-                     font=("Arial", 15, "bold")).pack(anchor="w", padx=20, pady=(20, 4))
+                     font=("Segoe UI", 15, "bold")).pack(anchor="w", padx=20, pady=(20, 4))
         ctk.CTkLabel(card,
                      text="Crie o bot no @BotFather e adicione-o como administrador dos grupos/canais de destino.\n"
                           "A conta continua só lendo as origens; quem publica é o bot (API oficial, sem risco de ban da conta).",
-                     font=("Arial", 11), text_color=("#64748b", "#94a3b8"), justify="left").pack(anchor="w", padx=20)
+                     font=("Segoe UI", 11), text_color=("#64748b", "#94a3b8"), justify="left").pack(anchor="w", padx=20)
 
         ctk.CTkLabel(card, text="Token do bot").pack(anchor="w", padx=20, pady=(16, 4))
         self._bot_token = ctk.CTkEntry(card, width=400, placeholder_text="123456789:AA...", show="*")
@@ -128,8 +128,42 @@ class ConfiguracoesFrame(ctk.CTkFrame):
         ctk.CTkButton(card, text="Salvar e conectar bot", command=self._save_bot,
                       fg_color=BTN_BLUE[0], hover_color=BTN_BLUE[1],
                       width=200).pack(anchor="w", padx=20, pady=(20, 6))
-        self._bot_status = ctk.CTkLabel(card, text=self._texto_status_bot(), font=("Arial", 12))
+        self._bot_status = ctk.CTkLabel(card, text=self._texto_status_bot(), font=("Segoe UI", 12))
         self._bot_status.pack(anchor="w", padx=20)
+
+        # Teste real: o bot publica uma mensagem no destino (confirma que ele é admin do canal/grupo)
+        teste = ctk.CTkFrame(card, fg_color="transparent")
+        teste.pack(anchor="w", padx=20, pady=(16, 4))
+        ctk.CTkLabel(teste, text="Testar publicação em (ID):").pack(side="left")
+        self._bot_teste_dest = ctk.CTkEntry(teste, width=180, placeholder_text="-100...")
+        self._bot_teste_dest.insert(0, db.get_config("radar_destino") or "")
+        self._bot_teste_dest.pack(side="left", padx=8)
+        ctk.CTkButton(teste, text="Enviar mensagem de teste", command=self._testar_bot,
+                      fg_color=BTN_GRAY[0], hover_color=BTN_GRAY[1], width=180).pack(side="left")
+        self._bot_teste_res = ctk.CTkLabel(card, text="", font=("Segoe UI", 12), wraplength=600, justify="left")
+        self._bot_teste_res.pack(anchor="w", padx=20, pady=(4, 12))
+
+    def _testar_bot(self):
+        from telegram_manager import telegram_manager
+        dest = self._bot_teste_dest.get().strip()
+        if not dest:
+            self._bot_teste_res.configure(text="Informe o ID do canal/grupo.")
+            return
+        if not telegram_manager.via_bot():
+            self._bot_teste_res.configure(text="🔴 Bot não conectado (ou 'Publicar pelo bot' desligado).")
+            return
+        self._bot_teste_res.configure(text="🟡 Enviando...")
+        texto = "✅ <b>Teste do bot</b>\nSe você está vendo esta mensagem, o bot consegue publicar aqui."
+        fut = telegram_manager._run(telegram_manager.enviar(None, dest, texto, html=True))
+
+        def _done(f):
+            try:
+                f.result()
+                txt = "🟢 Publicado! Confira no canal/grupo (pode apagar a mensagem de teste)."
+            except Exception as e:
+                txt = f"🔴 {e}"
+            self.after(0, lambda: self._bot_teste_res.configure(text=txt))
+        fut.add_done_callback(_done)
 
     def _texto_status_bot(self):
         from telegram_manager import telegram_manager
@@ -164,11 +198,27 @@ class ConfiguracoesFrame(ctk.CTkFrame):
     # ── Geral ─────────────────────────────────────────────────────────────────
 
     def _build_geral_tab(self, parent):
-        card = ctk.CTkFrame(parent, fg_color=("white", "#1e1e1e"), corner_radius=12)
+        card = ctk.CTkFrame(parent, fg_color=("#ffffff", "#181b22"), corner_radius=12)
         card.pack(fill="both", expand=True, padx=8, pady=8)
 
         ctk.CTkLabel(card, text="Configurações Gerais",
-                     font=("Arial", 15, "bold")).pack(anchor="w", padx=20, pady=(20, 16))
+                     font=("Segoe UI", 15, "bold")).pack(anchor="w", padx=20, pady=(20, 16))
+
+        # Abrir com o Windows (opção A de hospedagem: roda enquanto o PC estiver ligado)
+        import inicializacao
+        row0 = ctk.CTkFrame(card, fg_color="transparent")
+        row0.pack(fill="x", padx=20, pady=4)
+        ctk.CTkLabel(row0, text="Abrir junto com o Windows:", width=200, anchor="w").pack(side="left")
+        self._auto_var = ctk.BooleanVar(value=inicializacao.ativo())
+
+        def _alternar_auto():
+            try:
+                inicializacao.ativar() if self._auto_var.get() else inicializacao.desativar()
+            except Exception as e:
+                self._auto_var.set(inicializacao.ativo())
+                messagebox.showerror("Erro", f"Não foi possível alterar: {e}")
+        ctk.CTkSwitch(row0, text="(abre minimizado, sem precisar de admin)", variable=self._auto_var,
+                      command=_alternar_auto).pack(side="left")
 
         # Tema
         row = ctk.CTkFrame(card, fg_color="transparent")
@@ -202,24 +252,24 @@ class ConfiguracoesFrame(ctk.CTkFrame):
     # ── Sobre ─────────────────────────────────────────────────────────────────
 
     def _build_sobre_tab(self, parent):
-        card = ctk.CTkFrame(parent, fg_color=("white", "#1e1e1e"), corner_radius=12)
+        card = ctk.CTkFrame(parent, fg_color=("#ffffff", "#181b22"), corner_radius=12)
         card.pack(fill="both", expand=True, padx=8, pady=8)
 
         ctk.CTkLabel(card, text="🤖", font=("Segoe UI Emoji", 48)).pack(pady=(30, 8))
         ctk.CTkLabel(card, text="Repasse Automático Telegram",
-                     font=("Arial", 18, "bold")).pack()
+                     font=("Segoe UI", 18, "bold")).pack()
         ctk.CTkLabel(card, text="Versão 1.0.0",
-                     font=("Arial", 12), text_color=("#64748b", "#94a3b8")).pack(pady=4)
+                     font=("Segoe UI", 12), text_color=("#64748b", "#94a3b8")).pack(pady=4)
 
         ctk.CTkLabel(card,
                      text="Ferramenta para automatizar o repasse de mensagens entre grupos e canais do Telegram.\nSuporta múltiplas contas, filtros, substituições e integração com afiliados.",
-                     font=("Arial", 12), text_color=("#475569", "#cbd5e1"),
+                     font=("Segoe UI", 12), text_color=("#475569", "#cbd5e1"),
                      justify="center", wraplength=500).pack(pady=16)
 
         tech = ctk.CTkFrame(card, fg_color=("#f8fafc", "#161b22"), corner_radius=8)
         tech.pack(padx=40, pady=8, fill="x")
         for lib in ["Python 3.10+", "CustomTkinter", "Telethon", "SQLite"]:
-            ctk.CTkLabel(tech, text=f"• {lib}", font=("Arial", 12)).pack(anchor="w", padx=16, pady=2)
+            ctk.CTkLabel(tech, text=f"• {lib}", font=("Segoe UI", 12)).pack(anchor="w", padx=16, pady=2)
 
     def refresh(self):
         pass  # Sem necessidade de refresh dinâmico

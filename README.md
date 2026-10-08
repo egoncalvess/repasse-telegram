@@ -36,7 +36,7 @@ repasse_telegram.exe --headless      # ou: python main.py --headless
 
 Roda só o motor (repasses + agendador de nichos), sem janela. As contas precisam ter sido
 conectadas antes pela GUI (a sessão fica salva em `data/repasse.db`). Sem console, o log vai
-para `data/headless.log`.
+para `data/app.log`.
 
 ## Instalação (desenvolvimento)
 

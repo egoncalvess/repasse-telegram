@@ -96,6 +96,21 @@ def init_db():
         );
         CREATE INDEX IF NOT EXISTS idx_precos_visto ON precos(visto_em);
 
+        -- Várias origens por repasse (antes era uma só, em repasses.origem_id)
+        CREATE TABLE IF NOT EXISTS repasse_origens (
+            repasse_id  INTEGER NOT NULL,
+            origem_id   TEXT    NOT NULL,     -- ID marcado (-100… canal/supergrupo, -… grupo)
+            origem_nome TEXT,
+            PRIMARY KEY (repasse_id, origem_id)
+        );
+
+        -- Canais monitorados só para o Radar de Preços (não repassam nada)
+        CREATE TABLE IF NOT EXISTS fontes (
+            chat_id  TEXT PRIMARY KEY,
+            nome     TEXT,
+            conta_id INTEGER
+        );
+
         CREATE TABLE IF NOT EXISTS ofertas_vistas (
             chave    TEXT PRIMARY KEY,
             visto_em TEXT NOT NULL
@@ -117,6 +132,14 @@ def init_db():
         conn.commit()
     except sqlite3.OperationalError:
         pass
+    # Migração: origem única antiga -> tabela repasse_origens
+    conn.execute("""
+        INSERT OR IGNORE INTO repasse_origens (repasse_id, origem_id, origem_nome)
+        SELECT id, origem_id, origem_nome FROM repasses
+        WHERE origem_id IS NOT NULL AND origem_id != ''
+          AND id NOT IN (SELECT repasse_id FROM repasse_origens)
+    """)
+    conn.commit()
     # Migração automática de banco para adicionar coluna 'cookie' caso não exista
     try:
         conn.execute("ALTER TABLE integracoes ADD COLUMN cookie TEXT DEFAULT ''")
@@ -218,6 +241,7 @@ def toggle_repasse(repasse_id: int, ativo: int):
 def remover_repasse(repasse_id: int):
     conn = get_conn()
     conn.execute("DELETE FROM destinos WHERE repasse_id=?", (repasse_id,))
+    conn.execute("DELETE FROM repasse_origens WHERE repasse_id=?", (repasse_id,))
     conn.execute("DELETE FROM repasses WHERE id=?", (repasse_id,))
     conn.commit()
     conn.close()
@@ -249,6 +273,62 @@ def set_destinos(repasse_id: int, destinos: list):
         )
     conn.commit()
     conn.close()
+
+
+# ── Origens (várias por repasse) e fontes do radar ───────────────────────────
+
+def listar_origens(repasse_id: int):
+    conn = get_conn()
+    rows = conn.execute("SELECT origem_id, origem_nome FROM repasse_origens WHERE repasse_id=?",
+                        (repasse_id,)).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def set_origens(repasse_id: int, origens: list):
+    """origens: [{'origem_id', 'origem_nome'}]. Mantém repasses.origem_* como resumo para telas antigas."""
+    conn = get_conn()
+    conn.execute("DELETE FROM repasse_origens WHERE repasse_id=?", (repasse_id,))
+    conn.executemany("INSERT OR IGNORE INTO repasse_origens (repasse_id, origem_id, origem_nome) VALUES (?,?,?)",
+                     [(repasse_id, o["origem_id"], o["origem_nome"]) for o in origens])
+    resumo = origens[0]["origem_nome"] if len(origens) == 1 else f"{len(origens)} grupos"
+    conn.execute("UPDATE repasses SET origem_id=?, origem_nome=? WHERE id=?",
+                 (origens[0]["origem_id"] if origens else "", resumo if origens else "", repasse_id))
+    conn.commit()
+    conn.close()
+
+
+def listar_fontes():
+    conn = get_conn()
+    rows = conn.execute("SELECT * FROM fontes ORDER BY nome").fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def set_fontes(conta_id: int, fontes: list):
+    """fontes: [{'chat_id', 'nome'}] monitoradas pela conta (substitui a lista dessa conta)."""
+    conn = get_conn()
+    conn.execute("DELETE FROM fontes WHERE conta_id=?", (conta_id,))
+    conn.executemany("INSERT OR REPLACE INTO fontes (chat_id, nome, conta_id) VALUES (?,?,?)",
+                     [(f["chat_id"], f["nome"], conta_id) for f in fontes])
+    conn.commit()
+    conn.close()
+
+
+def chats_do_radar(conta_id: int) -> dict:
+    """{chat_id: nome} que a conta observa para o radar: fontes + origens dos repasses ativos."""
+    conn = get_conn()
+    rows = conn.execute("""
+        SELECT chat_id, nome FROM fontes WHERE conta_id = ?
+        UNION
+        SELECT o.origem_id, o.origem_nome FROM repasse_origens o
+        JOIN repasses r ON r.id = o.repasse_id WHERE r.conta_id = ? AND r.ativo = 1
+    """, (conta_id, conta_id)).fetchall()
+    conn.close()
+    chats = {r[0]: r[1] for r in rows}
+    # ID antigo sem prefixo e o mesmo chat com prefixo (-100…/-…): fica só a forma marcada
+    return {cid: nome for cid, nome in chats.items()
+            if not (cid.isdigit() and (f"-100{cid}" in chats or f"-{cid}" in chats))}
 
 
 # ── Integrações ───────────────────────────────────────────────────────────────

@@ -18,7 +18,7 @@ jobs:
           cache: pip
       - run: pip install -r requirements.txt pyinstaller==6.20.0
       - run: python -m compileall -q . -x "\.venv|build|dist"
-      - run: pyinstaller --onefile --windowed --name repasse_telegram --collect-data customtkinter main.py
+      - run: pyinstaller --onefile --windowed --name repasse_telegram --icon assets/logo.ico --add-data "assets;assets" --collect-data customtkinter main.py
       - uses: actions/upload-artifact@v4
         with:
           name: repasse_telegram-${{ github.sha }}
