@@ -76,61 +76,44 @@ def init_db():
             valor TEXT
         );
 
-        CREATE TABLE IF NOT EXISTS nicho_produtos (
-            id                 TEXT PRIMARY KEY,
-            nome               TEXT NOT NULL,
-            nicho              TEXT NOT NULL,
-            marketplace        TEXT NOT NULL,
-            url_original       TEXT NOT NULL,
-            url_afiliado       TEXT NOT NULL,
-            imagem_url         TEXT,
-            preco_atual        REAL,
-            menor_preco        REAL,
-            menor_preco_data   TEXT,
-            ultima_atualizacao TEXT
+        -- Radar de preços: produtos vistos nos canais monitorados e cada preço observado
+        CREATE TABLE IF NOT EXISTS produtos (
+            chave         TEXT PRIMARY KEY,   -- ex.: ml:3530990045 (ver dedup.chave_produto)
+            nome          TEXT NOT NULL,
+            loja          TEXT NOT NULL,
+            url           TEXT NOT NULL,
+            imagem        TEXT,               -- caminho local da foto da oferta
+            criado_em     TEXT NOT NULL,
+            atualizado_em TEXT NOT NULL
         );
 
-        CREATE TABLE IF NOT EXISTS nicho_precos_historico (
-            produto_id TEXT NOT NULL,
-            data       TEXT NOT NULL,
-            preco      REAL NOT NULL,
-            PRIMARY KEY (produto_id, data),
-            FOREIGN KEY(produto_id) REFERENCES nicho_produtos(id) ON DELETE CASCADE
+        CREATE TABLE IF NOT EXISTS precos (
+            chave    TEXT NOT NULL,
+            preco    REAL NOT NULL,
+            visto_em TEXT NOT NULL,           -- YYYY-MM-DD HH:MM (hora local)
+            origem   TEXT,
+            PRIMARY KEY (chave, visto_em)
         );
-
-        CREATE TABLE IF NOT EXISTS nicho_dashboard_stats (
-            id          INTEGER PRIMARY KEY AUTOINCREMENT,
-            data        TEXT NOT NULL,
-            plataforma  TEXT NOT NULL,
-            cliques     INTEGER DEFAULT 0,
-            vendas      INTEGER DEFAULT 0,
-            faturamento REAL DEFAULT 0.0,
-            UNIQUE(data, plataforma)
-        );
+        CREATE INDEX IF NOT EXISTS idx_precos_visto ON precos(visto_em);
 
         CREATE TABLE IF NOT EXISTS ofertas_vistas (
             chave    TEXT PRIMARY KEY,
             visto_em TEXT NOT NULL
         );
 
-        CREATE TABLE IF NOT EXISTS nicho_disparos_status (
-            id         INTEGER PRIMARY KEY AUTOINCREMENT,
-            data       TEXT NOT NULL,
-            produto_id TEXT,
-            status     TEXT NOT NULL,
-            detalhes   TEXT
+        CREATE TABLE IF NOT EXISTS publicacoes (
+            id       INTEGER PRIMARY KEY AUTOINCREMENT,
+            chave    TEXT,
+            destino  TEXT,
+            data     TEXT NOT NULL,           -- YYYY-MM-DD HH:MM:SS
+            status   TEXT NOT NULL,
+            detalhes TEXT
         );
     """)
     conn.commit()
     # Migração automática de banco para adicionar coluna 'tipo' caso não exista
     try:
         conn.execute("ALTER TABLE contas ADD COLUMN tipo TEXT DEFAULT 'telegram'")
-        conn.commit()
-    except sqlite3.OperationalError:
-        pass
-    # Migração: preço riscado real informado pela loja (base do % de desconto)
-    try:
-        conn.execute("ALTER TABLE nicho_produtos ADD COLUMN preco_original REAL")
         conn.commit()
     except sqlite3.OperationalError:
         pass
@@ -352,106 +335,87 @@ def set_config(chave: str, valor: str):
     conn.close()
 
 
-# ── Nichos e Dashboard ────────────────────────────────────────────────────────
+# ── Radar de preços ───────────────────────────────────────────────────────────
 
-def _parse_price(val) -> float:
-    if val is None:
-        return 0.0
-    if isinstance(val, (int, float)):
-        return float(val)
-    try:
-        # Limpeza de string monetária brasileira
-        s = str(val).replace("R$", "").replace(" ", "")
-        if "," in s:
-            s = s.replace(".", "").replace(",", ".")
-        else:
-            s = s.replace(".", "") # se não houver vírgula, remove pontos de milhar
-        return float(s)
-    except Exception:
-        return 0.0
-
-def salvar_produto_nicho(p: dict):
-    """
-    Salva ou atualiza um produto de nicho no banco de dados.
-    Calcula automaticamente o menor preço histórico e a data dele.
-    p keys: id, nome, nicho, marketplace, url_original, url_afiliado, imagem_url, preco_atual, data_atual (opcional)
-    """
+def registrar_preco(chave: str, nome: str, loja: str, url: str, preco: float, origem: str = "", imagem: str = None):
+    """Upsert do produto + uma observação de preço (mesmo minuto não duplica)."""
+    agora = datetime.now().strftime("%Y-%m-%d %H:%M")
     conn = get_conn()
-    data_atual = p.get("data_atual") or datetime.now().strftime("%Y-%m-%d")
-    preco_atual = _parse_price(p.get("preco_atual")) if p.get("preco_atual") else None
-    
-    # 1. Busca se produto já existe
-    row = conn.execute("SELECT menor_preco, menor_preco_data FROM nicho_produtos WHERE id = ?", (p["id"],)).fetchone()
-    
-    menor_preco = preco_atual
-    menor_preco_data = data_atual
-    
-    if row:
-        hist_menor_preco = row["menor_preco"]
-        hist_menor_preco_data = row["menor_preco_data"]
-        
-        if hist_menor_preco is not None and preco_atual is not None:
-            if preco_atual < hist_menor_preco:
-                menor_preco = preco_atual
-                menor_preco_data = data_atual
-            else:
-                menor_preco = hist_menor_preco
-                menor_preco_data = hist_menor_preco_data
-    
     conn.execute("""
-        INSERT OR REPLACE INTO nicho_produtos 
-            (id, nome, nicho, marketplace, url_original, url_afiliado, imagem_url, preco_atual, menor_preco, menor_preco_data, ultima_atualizacao, preco_original)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, (
-        p["id"],
-        p["nome"],
-        p["nicho"],
-        p["marketplace"],
-        p["url_original"],
-        p["url_afiliado"],
-        p.get("imagem_url"),
-        preco_atual,
-        menor_preco,
-        menor_preco_data,
-        data_atual,
-        p.get("preco_original")
-    ))
-    
-    # Insere também no histórico de preços se houver preço
-    if preco_atual is not None:
-        conn.execute("""
-            INSERT OR REPLACE INTO nicho_precos_historico (produto_id, data, preco)
-            VALUES (?, ?, ?)
-        """, (p["id"], data_atual, preco_atual))
-        
+        INSERT INTO produtos (chave, nome, loja, url, imagem, criado_em, atualizado_em)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(chave) DO UPDATE SET
+            nome = excluded.nome, url = excluded.url, atualizado_em = excluded.atualizado_em,
+            imagem = COALESCE(excluded.imagem, produtos.imagem)
+    """, (chave, nome, loja, url, imagem, agora, agora))
+    conn.execute("INSERT OR IGNORE INTO precos (chave, preco, visto_em, origem) VALUES (?, ?, ?, ?)",
+                 (chave, preco, agora, origem))
+    conn.execute("DELETE FROM precos WHERE visto_em < date('now', 'localtime', '-180 days')")
     conn.commit()
     conn.close()
 
-def adicionar_preco_historico(produto_id: str, preco: float, data_str: str = None):
+
+def tem_imagem(chave: str) -> bool:
     conn = get_conn()
-    if not data_str:
-        data_str = datetime.now().strftime("%Y-%m-%d")
-    
-    preco = _parse_price(preco)
-    
-    conn.execute("""
-        INSERT OR REPLACE INTO nicho_precos_historico (produto_id, data, preco)
-        VALUES (?, ?, ?)
-    """, (produto_id, data_str, preco))
-    
-    # Recalcula o menor preço na tabela de produtos
-    rows = conn.execute("SELECT preco, data FROM nicho_precos_historico WHERE produto_id = ? ORDER BY preco ASC, data ASC", (produto_id,)).fetchall()
-    if rows:
-        menor = rows[0]["preco"]
-        menor_data = rows[0]["data"]
-        conn.execute("""
-            UPDATE nicho_produtos 
-            SET preco_atual = ?, menor_preco = ?, menor_preco_data = ?, ultima_atualizacao = ?
-            WHERE id = ?
-        """, (preco, menor, menor_data, data_str, produto_id))
-        
+    row = conn.execute("SELECT imagem FROM produtos WHERE chave=?", (chave,)).fetchone()
+    conn.close()
+    return bool(row and row["imagem"])
+
+
+def menores_precos_do_dia(limit: int = 50, chave: str = None):
+    """
+    Produtos com preço visto hoje, comparados ao próprio histórico (menor preço por dia, 90 dias):
+    minimo/media/dias = dias anteriores a hoje. Ordena pela maior queda em relação à média.
+    """
+    conn = get_conn()
+    rows = conn.execute(f"""
+        WITH diario AS (
+            SELECT chave, date(visto_em) AS dia, MIN(preco) AS preco
+            FROM precos WHERE visto_em >= date('now', 'localtime', '-90 days')
+            GROUP BY chave, dia),
+        hoje AS (SELECT chave, preco FROM diario WHERE dia = date('now', 'localtime')),
+        antes AS (SELECT chave, MIN(preco) AS minimo, AVG(preco) AS media, COUNT(*) AS dias
+                  FROM diario WHERE dia < date('now', 'localtime') GROUP BY chave)
+        SELECT p.*, h.preco AS preco_hoje, a.minimo, a.media, COALESCE(a.dias, 0) AS dias
+        FROM hoje h JOIN produtos p USING (chave) LEFT JOIN antes a USING (chave)
+        {"WHERE p.chave = ?" if chave else ""}
+        ORDER BY a.media IS NULL, (a.media - h.preco) / a.media DESC
+        LIMIT ?
+    """, ((chave,) if chave else ()) + (limit,)).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def resumo_radar() -> dict:
+    conn = get_conn()
+    r = conn.execute("""
+        SELECT (SELECT COUNT(*) FROM produtos) AS produtos,
+               (SELECT COUNT(*) FROM precos WHERE visto_em >= date('now', 'localtime')) AS precos_hoje
+    """).fetchone()
+    conn.close()
+    return dict(r)
+
+
+def registrar_publicacao(chave: str, destino: str, status: str, detalhes: str = ""):
+    conn = get_conn()
+    conn.execute("INSERT INTO publicacoes (chave, destino, data, status, detalhes) VALUES (?, ?, ?, ?, ?)",
+                 (chave, destino, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), status, detalhes))
     conn.commit()
     conn.close()
+
+
+def contar_envios_hoje() -> int:
+    """Repasses com sucesso + ofertas publicadas pelo radar hoje."""
+    conn = get_conn()
+    repasses = conn.execute("SELECT COUNT(*) FROM historico WHERE status='Sucesso' AND data LIKE ?",
+                            (datetime.now().strftime("%d/%m/%Y") + "%",)).fetchone()[0]
+    radar = conn.execute("SELECT COUNT(*) FROM publicacoes WHERE status='enviado' AND data >= date('now', 'localtime')"
+                         ).fetchone()[0]
+    conn.close()
+    return repasses + radar
+
+
+# ── Deduplicação de ofertas ───────────────────────────────────────────────────
 
 def ofertas_recentes(chaves, horas: int = 24) -> set:
     """Quais dessas chaves de produto já foram publicadas nas últimas X horas."""
@@ -465,6 +429,7 @@ def ofertas_recentes(chaves, horas: int = 24) -> set:
     conn.close()
     return {r["chave"] for r in rows}
 
+
 def marcar_ofertas(chaves):
     conn = get_conn()
     conn.executemany("INSERT OR REPLACE INTO ofertas_vistas (chave, visto_em) VALUES (?, datetime('now', 'localtime'))",
@@ -472,100 +437,3 @@ def marcar_ofertas(chaves):
     conn.execute("DELETE FROM ofertas_vistas WHERE visto_em < datetime('now', 'localtime', '-30 days')")
     conn.commit()
     conn.close()
-
-def contar_dias_historico(produto_id: str) -> int:
-    conn = get_conn()
-    n = conn.execute("SELECT COUNT(*) FROM nicho_precos_historico WHERE produto_id=?", (produto_id,)).fetchone()[0]
-    conn.close()
-    return n
-
-def contar_envios_hoje() -> int:
-    """Repasses com sucesso + ofertas de nicho enviadas hoje."""
-    conn = get_conn()
-    repasses = conn.execute("SELECT COUNT(*) FROM historico WHERE status='Sucesso' AND data LIKE ?",
-                            (datetime.now().strftime("%d/%m/%Y") + "%",)).fetchone()[0]
-    ofertas = conn.execute("SELECT COUNT(*) FROM nicho_disparos_status WHERE status='enviado' AND data=?",
-                           (datetime.now().strftime("%Y-%m-%d"),)).fetchone()[0]
-    conn.close()
-    return repasses + ofertas
-
-def listar_produtos_nicho(nicho: str = None, order_by: str = None, limit: int = 100, atualizado_em: str = None):
-    conn = get_conn()
-    query = "SELECT * FROM nicho_produtos WHERE 1=1"
-    params = []
-    
-    if nicho and nicho.strip().lower() not in ["todos os nichos", "todos", "all"]:
-        query += " AND nicho = ?"
-        params.append(nicho)
-    if atualizado_em:
-        query += " AND ultima_atualizacao = ?"
-        params.append(atualizado_em)
-        
-    if order_by == "preco_asc":
-        query += " ORDER BY preco_atual ASC"
-    elif order_by == "preco_desc":
-        query += " ORDER BY preco_atual DESC"
-    elif order_by == "desconto":
-        query += " ORDER BY COALESCE(1 - preco_atual / NULLIF(preco_original, 0), 0) DESC"  # maior % de desconto real
-    else:
-        query += " ORDER BY ultima_atualizacao DESC"
-        
-    query += " LIMIT ?"
-    params.append(limit)
-    
-    rows = conn.execute(query, params).fetchall()
-    conn.close()
-    return [dict(r) for r in rows]
-
-def prunar_precos_historicos_90_dias():
-    conn = get_conn()
-    # Compara strings de datas diretas YYYY-MM-DD
-    conn.execute("DELETE FROM nicho_precos_historico WHERE date(data) < date('now', '-90 days')")
-    conn.commit()
-    conn.close()
-
-def salvar_stats_dashboard(data_str: str, plataforma: str, cliques: int, vendas: int, faturamento: float):
-    conn = get_conn()
-    conn.execute("""
-        INSERT INTO nicho_dashboard_stats (data, plataforma, cliques, vendas, faturamento)
-        VALUES (?, ?, ?, ?, ?)
-        ON CONFLICT(data, plataforma) DO UPDATE SET
-            cliques = excluded.cliques,
-            vendas = excluded.vendas,
-            faturamento = excluded.faturamento
-    """, (data_str, plataforma, cliques, vendas, faturamento))
-    conn.commit()
-    conn.close()
-
-def listar_stats_dashboard(periodo_dias: int = 30):
-    conn = get_conn()
-    rows = conn.execute("""
-        SELECT data, plataforma, cliques, vendas, faturamento 
-        FROM nicho_dashboard_stats 
-        WHERE date(data) >= date('now', ?)
-        ORDER BY data DESC, plataforma ASC
-    """, (f"-{periodo_dias} days",)).fetchall()
-    conn.close()
-    return [dict(r) for r in rows]
-
-def salvar_disparo_status(produto_id: str, data_str: str, status: str, detalhes: str = ""):
-    conn = get_conn()
-    conn.execute("""
-        INSERT INTO nicho_disparos_status (data, produto_id, status, detalhes)
-        VALUES (?, ?, ?, ?)
-    """, (data_str, produto_id, status, detalhes))
-    conn.commit()
-    conn.close()
-
-def listar_disparos_hoje():
-    conn = get_conn()
-    data_str = datetime.now().strftime("%Y-%m-%d")
-    rows = conn.execute("""
-        SELECT d.*, p.nome, p.marketplace, p.preco_atual 
-        FROM nicho_disparos_status d
-        LEFT JOIN nicho_produtos p ON d.produto_id = p.id
-        WHERE d.data = ?
-        ORDER BY d.id DESC
-    """, (data_str,)).fetchall()
-    conn.close()
-    return [dict(r) for r in rows]

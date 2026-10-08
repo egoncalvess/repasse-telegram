@@ -14,6 +14,8 @@ Ferramenta desktop para automatizar o repasse de mensagens entre grupos e canais
 - **Horário de funcionamento** — Defina o intervalo de horas
 - **Integrações de afiliados** — Amazon, Mercado Livre, Shopee, AliExpress, Magalu
 - **Relatórios** — Histórico de todos os repasses com status
+- **Radar de Preços** — Registra o preço de cada oferta vista nos canais de origem e mostra os menores preços do dia (com publicação em 1 clique, também pelo painel do bot)
+- **Bot + painel inline** — Publicação pelo bot oficial e controle pelo chat privado (/start)
 - **Interface gráfica** — GUI desktop moderna com CustomTkinter
 
 ## Requisitos

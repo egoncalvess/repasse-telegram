@@ -301,6 +301,13 @@ class TelegramManager:
             if not current or not current["ativo"]:
                 return
 
+            # Radar de preços: registra o preço de toda oferta da origem, mesmo que não seja repassada
+            try:
+                import radar
+                await radar.capturar(event.message, event.message.text or "", current["origem_nome"] or "")
+            except Exception as e:
+                print(f"[Radar] Falha ao registrar preço: {e}")
+
             # Pausa global (painel do bot)
             if db.get_config("pausado", "0") == "1":
                 return

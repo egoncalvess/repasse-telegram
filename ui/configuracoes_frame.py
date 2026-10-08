@@ -21,13 +21,11 @@ class ConfiguracoesFrame(ctk.CTkFrame):
 
         tab.add("API Telegram")
         tab.add("Bot")
-        tab.add("Mercado Livre")
         tab.add("Geral")
         tab.add("Sobre")
 
         self._build_api_tab(tab.tab("API Telegram"))
         self._build_bot_tab(tab.tab("Bot"))
-        self._build_ml_tab(tab.tab("Mercado Livre"))
         self._build_geral_tab(tab.tab("Geral"))
         self._build_sobre_tab(tab.tab("Sobre"))
 
@@ -162,52 +160,6 @@ class ConfiguracoesFrame(ctk.CTkFrame):
             self.after(0, lambda: self._bot_status.configure(text=txt))
 
         telegram_manager.iniciar_bot(cb)
-
-    # ── Mercado Livre (API oficial) ───────────────────────────────────────────
-
-    def _build_ml_tab(self, parent):
-        card = ctk.CTkFrame(parent, fg_color=("white", "#1e1e1e"), corner_radius=12)
-        card.pack(fill="both", expand=True, padx=8, pady=8)
-
-        ctk.CTkLabel(card, text="API oficial do Mercado Livre (busca de ofertas por nicho)",
-                     font=("Arial", 15, "bold")).pack(anchor="w", padx=20, pady=(20, 4))
-        ctk.CTkLabel(card,
-                     text="A busca pública do ML e o site bloqueiam robôs. Com um app gratuito do DevCenter,\n"
-                          "o agendador lê os mais vendidos de cada nicho com preço real.\n"
-                          "Crie em developers.mercadolivre.com.br/devcenter → Criar aplicação e copie Client ID e Secret.",
-                     font=("Arial", 11), text_color=("#64748b", "#94a3b8"), justify="left").pack(anchor="w", padx=20)
-
-        ctk.CTkLabel(card, text="Client ID (App ID)").pack(anchor="w", padx=20, pady=(16, 4))
-        self._ml_id = ctk.CTkEntry(card, width=400, placeholder_text="Ex: 1234567890123456")
-        self._ml_id.pack(anchor="w", padx=20)
-        self._ml_id.insert(0, db.get_config("ml_client_id") or "")
-
-        ctk.CTkLabel(card, text="Client Secret").pack(anchor="w", padx=20, pady=(12, 4))
-        self._ml_secret = ctk.CTkEntry(card, width=400, show="*")
-        self._ml_secret.pack(anchor="w", padx=20)
-        self._ml_secret.insert(0, db.get_config("ml_client_secret") or "")
-
-        ctk.CTkButton(card, text="Salvar e testar conexão", command=self._save_ml,
-                      fg_color=BTN_BLUE[0], hover_color=BTN_BLUE[1],
-                      width=200).pack(anchor="w", padx=20, pady=(20, 6))
-        self._ml_status = ctk.CTkLabel(card, text="", font=("Arial", 12), wraplength=600, justify="left")
-        self._ml_status.pack(anchor="w", padx=20)
-
-    def _save_ml(self):
-        db.set_config("ml_client_id", self._ml_id.get().strip())
-        db.set_config("ml_client_secret", self._ml_secret.get().strip())
-        self._ml_status.configure(text="🟡 Testando...")
-
-        def _worker():
-            import niche_scraper
-            try:
-                txt = "🟢 " + niche_scraper.testar_conexao_ml()
-            except Exception as e:
-                txt = f"🔴 {e}"
-            self.after(0, lambda: self._ml_status.configure(text=txt))
-
-        import threading
-        threading.Thread(target=_worker, daemon=True).start()
 
     # ── Geral ─────────────────────────────────────────────────────────────────
 

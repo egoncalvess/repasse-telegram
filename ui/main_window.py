@@ -48,7 +48,7 @@ class MainWindow(ctk.CTk):
             ("contas",        "👤   Contas"),
             ("repasses",      "📨   Repasses"),
             ("disparador",    "🚀   Disparador"),
-            ("nicho_dashboard","📊   Nicho & Painel"),
+            ("radar",         "📉   Radar de Preços"),
             ("integracoes",   "🔗   Integrações"),
             ("configuracoes", "⚙️   Configurações"),
         ]
@@ -81,13 +81,13 @@ class MainWindow(ctk.CTk):
         from ui.disparador_frame import DisparadorFrame
         from ui.integracoes_frame import IntegracoesFrame
         from ui.configuracoes_frame import ConfiguracoesFrame
-        from ui.nicho_dashboard_frame import NichoDashboardFrame
+        from ui.radar_frame import RadarFrame
 
         self._frames = {
             "contas":        ContasFrame(self._content),
             "repasses":      RepassesFrame(self._content),
             "disparador":    DisparadorFrame(self._content),
-            "nicho_dashboard": NichoDashboardFrame(self._content),
+            "radar":         RadarFrame(self._content),
             "integracoes":   IntegracoesFrame(self._content),
             "configuracoes": ConfiguracoesFrame(self._content),
         }

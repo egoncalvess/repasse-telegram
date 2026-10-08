@@ -34,15 +34,11 @@ def main():
 
 
 def _start_engine():
-    """Sobe o motor: bot (publicação + painel), contas (que restauram seus repasses) e agendador."""
+    """Sobe o motor: bot (publicação + painel) e contas (que restauram seus repasses e o radar)."""
     if db.get_config("bot_token"):
         from telegram_manager import telegram_manager
         telegram_manager.iniciar_bot()
     _auto_reconnect()
-
-    from niche_scheduler import niche_scheduler
-    if db.get_config("nicho_scheduler_ativo", "0") == "1":
-        niche_scheduler.start()
 
 
 def _run_headless():

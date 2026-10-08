@@ -18,6 +18,7 @@ PADROES = [
 ENCURTADORES = ("amzn.to", "a.co/", "shope.ee", "s.shopee", "mercadolivre.com/sec/", "meli.la",
                 "meli.to", "mlb.link", "ml.link", "s.click.aliexpress", "onelink.me")
 URL_RE = re.compile(r"https?://[^\s<>\"')\]]+")
+_resolvidos: dict[str, str] = {}  # encurtador -> URL final
 
 
 def _desembrulhar(url: str) -> str:
@@ -34,14 +35,22 @@ def chave_produto(url: str) -> str | None:
     return None
 
 
-async def chaves_do_texto(texto: str) -> set[str]:
-    """Chaves de produto de todos os links de loja do texto (resolve encurtadores)."""
-    chaves = set()
+async def produtos_do_texto(texto: str) -> dict[str, str]:
+    """{chave do produto: URL final} de todos os links de loja do texto (resolve encurtadores)."""
+    produtos = {}
     for url in URL_RE.findall(texto or ""):
         url = url.rstrip(".,;!?")
         if any(e in url.lower() for e in ENCURTADORES):
-            url = _desembrulhar(await resolve_url_async(url))
+            if url not in _resolvidos:  # radar e filtro de repetidas leem a mesma msg: resolve uma vez só
+                if len(_resolvidos) > 2000:
+                    _resolvidos.clear()
+                _resolvidos[url] = _desembrulhar(await resolve_url_async(url))
+            url = _resolvidos[url]
         chave = chave_produto(url)
         if chave:
-            chaves.add(chave)
-    return chaves
+            produtos.setdefault(chave, url)
+    return produtos
+
+
+async def chaves_do_texto(texto: str) -> set[str]:
+    return set(await produtos_do_texto(texto))

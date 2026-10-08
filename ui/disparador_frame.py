@@ -229,8 +229,6 @@ class DisparadorFrame(ctk.CTkFrame):
     def _broadcast_thread(self, conta: dict, dest: str, messages: list[str], delay: int, file_path: str):
         conta_id = conta["id"]
         from telegram_manager import telegram_manager
-        from niche_scheduler import log_disparo_to_google_sheets
-        webhook_url = db.get_config("nicho_scheduler_sheets_webhook", "")
 
         total = len(messages)
         sucessos = 0
@@ -260,10 +258,8 @@ class DisparadorFrame(ctk.CTkFrame):
             if success:
                 sucessos += 1
                 self._enqueue_log(f"✅ [{idx}/{total}] Enviada com sucesso!")
-                log_disparo_to_google_sheets(webhook_url, conta.get("apelido", conta_id), dest, "Sucesso", text[:100])
             else:
                 self._enqueue_log(f"❌ [{idx}/{total}] Erro ao enviar.")
-                log_disparo_to_google_sheets(webhook_url, conta.get("apelido", conta_id), dest, "Falha", text[:100])
 
             if idx < total:
                 self._enqueue_log(f"⏳ Aguardando {delay} segundos antes do próximo disparo...")
