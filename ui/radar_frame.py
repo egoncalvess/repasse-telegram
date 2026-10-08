@@ -28,6 +28,12 @@ class RadarFrame(ctk.CTkFrame):
         self._resumo.pack(side="left", padx=8)
         ctk.CTkButton(hdr, text="↻ Atualizar", width=110, command=self.refresh,
                       fg_color=BTN_GRAY[0], hover_color=BTN_GRAY[1]).pack(side="right", padx=12)
+        self._btn_importar = ctk.CTkButton(hdr, text="📥 Importar histórico", width=160, command=self._importar,
+                                           fg_color=BTN_BLUE[0], hover_color=BTN_BLUE[1])
+        self._btn_importar.pack(side="right", padx=4)
+        self._dias = ctk.StringVar(value="30 dias")
+        ctk.CTkOptionMenu(hdr, variable=self._dias, values=["7 dias", "30 dias", "90 dias"],
+                          width=100).pack(side="right", padx=4)
 
         dest = ctk.CTkFrame(self, fg_color=("white", "#1e1e1e"), corner_radius=12)
         dest.pack(fill="x", padx=16, pady=(0, 8))
@@ -72,6 +78,28 @@ class RadarFrame(ctk.CTkFrame):
                 ctk.CTkLabel(row, text=v, width=w, anchor="w").pack(side="left", padx=4)
             ctk.CTkButton(row, text="Publicar", width=80, fg_color=BTN_BLUE[0], hover_color=BTN_BLUE[1],
                           command=lambda c=p["chave"], n=p["nome"]: self._publicar(c, n)).pack(side="left", padx=4)
+
+    def _importar(self):
+        """Lê as postagens antigas dos canais de origem dos repasses e registra os preços com a data original."""
+        from telegram_manager import telegram_manager
+        dias = int(self._dias.get().split()[0])
+        self._btn_importar.configure(state="disabled", text="Importando...")
+        self._resumo.configure(text="Lendo histórico dos canais (pode levar alguns minutos)...")
+
+        def progresso(txt):
+            self.after(0, lambda: self._resumo.configure(text=txt))
+
+        def concluido(res, err):
+            def _ui():
+                self._btn_importar.configure(state="normal", text="📥 Importar histórico")
+                self.refresh()
+                if err:
+                    messagebox.showerror("Erro", f"Falha ao importar: {err}", parent=self)
+                else:
+                    messagebox.showinfo("Histórico importado", res, parent=self)
+            self.after(0, _ui)
+
+        telegram_manager.importar_historico(dias, concluido, progresso)
 
     def _salvar_destino(self):
         db.set_config("radar_destino", self._destino.get().strip())

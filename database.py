@@ -337,16 +337,22 @@ def set_config(chave: str, valor: str):
 
 # ── Radar de preços ───────────────────────────────────────────────────────────
 
-def registrar_preco(chave: str, nome: str, loja: str, url: str, preco: float, origem: str = "", imagem: str = None):
-    """Upsert do produto + uma observação de preço (mesmo minuto não duplica)."""
-    agora = datetime.now().strftime("%Y-%m-%d %H:%M")
+def registrar_preco(chave: str, nome: str, loja: str, url: str, preco: float, origem: str = "", imagem: str = None,
+                    visto_em: datetime = None):
+    """Upsert do produto + uma observação de preço (mesmo minuto não duplica).
+    visto_em: data original da postagem (importação de histórico); padrão = agora."""
+    agora = (visto_em or datetime.now()).strftime("%Y-%m-%d %H:%M")
     conn = get_conn()
+    # Importação pode chegar fora de ordem: nome/url só são trocados por uma observação mais recente
     conn.execute("""
         INSERT INTO produtos (chave, nome, loja, url, imagem, criado_em, atualizado_em)
         VALUES (?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(chave) DO UPDATE SET
-            nome = excluded.nome, url = excluded.url, atualizado_em = excluded.atualizado_em,
-            imagem = COALESCE(excluded.imagem, produtos.imagem)
+            nome = CASE WHEN excluded.atualizado_em >= produtos.atualizado_em THEN excluded.nome ELSE produtos.nome END,
+            url  = CASE WHEN excluded.atualizado_em >= produtos.atualizado_em THEN excluded.url ELSE produtos.url END,
+            atualizado_em = MAX(produtos.atualizado_em, excluded.atualizado_em),
+            criado_em = MIN(produtos.criado_em, excluded.criado_em),
+            imagem = COALESCE(produtos.imagem, excluded.imagem)
     """, (chave, nome, loja, url, imagem, agora, agora))
     conn.execute("INSERT OR IGNORE INTO precos (chave, preco, visto_em, origem) VALUES (?, ?, ?, ?)",
                  (chave, preco, agora, origem))

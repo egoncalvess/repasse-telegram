@@ -300,6 +300,7 @@ class TelegramManager:
             current = db.get_repasse(repasse_id)
             if not current or not current["ativo"]:
                 return
+            print(f"[Repasse {current['descricao']}] nova mensagem de {current['origem_nome']}")
 
             # Radar de preços: registra o preço de toda oferta da origem, mesmo que não seja repassada
             try:
@@ -429,6 +430,42 @@ class TelegramManager:
             client = self.clients.get(conta_id)
             if client:
                 client.remove_event_handler(handler)
+
+    # ── Importação de histórico (Radar) ──────────────────────────────────────
+
+    async def _importar_historico(self, dias: int, progresso=None):
+        """Importa as postagens antigas de cada canal de origem (uma vez por canal), pela conta do repasse."""
+        import radar
+        origens = {}
+        for r in db.listar_repasses():
+            if r["origem_id"] and r["conta_id"] in self.clients:
+                origens.setdefault(r["origem_id"], r)
+        if not origens:
+            raise RuntimeError("Nenhum repasse com conta conectada para ler os canais de origem.")
+        total_lidas = total_reg = 0
+        for i, (origem_id, r) in enumerate(origens.items(), 1):
+            nome = r["origem_nome"] or origem_id
+            client = self.clients[r["conta_id"]]
+            entity = await self.resolve_entity(client, origem_id)
+
+            def _prog(lidas, reg, nome=nome, i=i):
+                if progresso:
+                    progresso(f"[{i}/{len(origens)}] {nome[:30]}: {lidas} msgs lidas, {reg} preços")
+
+            lidas, reg = await radar.importar_historico(client, entity, nome, dias, _prog)
+            print(f"[Radar] Histórico de {nome}: {lidas} mensagens lidas, {reg} preços registrados")
+            total_lidas += lidas
+            total_reg += reg
+        return f"{len(origens)} canais · {total_lidas} mensagens lidas · {total_reg} preços registrados"
+
+    def importar_historico(self, dias: int, callback, progresso=None):
+        def _done(fut):
+            try:
+                callback(fut.result(), None)
+            except Exception as e:
+                callback(None, str(e))
+
+        self._run(self._importar_historico(dias, progresso)).add_done_callback(_done)
 
     # ── API Pública (thread-safe) ─────────────────────────────────────────────
 
