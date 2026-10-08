@@ -17,6 +17,7 @@ import database as db
 
 class TelegramManager:
     def __init__(self):
+        self._tasks: set[asyncio.Task] = set()              # refs fortes: asyncio só guarda refs fracas
         self.loop = asyncio.new_event_loop()
         self._thread = threading.Thread(target=self._run_loop, daemon=True)
         self._thread.start()
@@ -33,8 +34,16 @@ class TelegramManager:
         self.loop.run_forever()
 
     def _run(self, coro):
-        """Envia coroutine para o loop e retorna Future."""
-        return asyncio.run_coroutine_threadsafe(coro, self.loop)
+        """Envia coroutine para o loop e retorna Future.
+        Mantém a task referenciada até terminar; sem isso o GC pode destruí-la no meio (ex.: connect)."""
+        async def _keep():
+            task = asyncio.current_task()
+            self._tasks.add(task)
+            try:
+                return await coro
+            finally:
+                self._tasks.discard(task)
+        return asyncio.run_coroutine_threadsafe(_keep(), self.loop)
 
     # ── Credenciais ──────────────────────────────────────────────────────────
 
