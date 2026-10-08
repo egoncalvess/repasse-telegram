@@ -1,0 +1,26 @@
+# Gera o executável Windows na nuvem: nenhum pip na máquina local.
+# Baixe o .exe em Actions → execução → Artifacts.
+name: build
+
+on:
+  push:
+    branches: [main, "etapa*/**"]
+  workflow_dispatch:
+
+jobs:
+  windows-exe:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+      - run: pip install -r requirements.txt pyinstaller==6.20.0
+      - run: python -m compileall -q . -x "\.venv|build|dist"
+      - run: pyinstaller --onefile --windowed --name repasse_telegram --collect-data customtkinter main.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: repasse_telegram-${{ github.sha }}
+          path: dist/repasse_telegram.exe
+          retention-days: 30

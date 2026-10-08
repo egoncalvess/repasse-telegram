@@ -1,6 +1,5 @@
 import sys
-import codecs
-import customtkinter as ctk
+import threading
 import database as db
 
 # Garantir codificação UTF-8 para stdout e stderr no Windows
@@ -15,6 +14,12 @@ def main():
     # Inicializar banco
     db.init_db()
 
+    if "--headless" in sys.argv:
+        _run_headless()
+        return
+
+    import customtkinter as ctk
+
     # Tema salvo
     theme = db.get_config("theme", "dark")
     ctk.set_appearance_mode(theme)
@@ -24,21 +29,36 @@ def main():
     from ui.main_window import MainWindow
     app = MainWindow()
 
-    # Reconectar contas que tinham sessão salva
+    _start_engine()
+    app.mainloop()
+
+
+def _start_engine():
+    """Sobe o motor: reconecta contas (que restauram seus repasses) e o agendador de nichos."""
     _auto_reconnect()
 
-    # Inicializar agendador de nichos se ativo
     from niche_scheduler import niche_scheduler
     if db.get_config("nicho_scheduler_ativo", "0") == "1":
         niche_scheduler.start()
 
-    app.mainloop()
+
+def _run_headless():
+    """Roda só o motor, sem interface (servidor/24h). Contas precisam ter sessão salva pela GUI."""
+    if sys.stdout is None:  # exe --windowed não tem console: loga em arquivo
+        log = open("data/headless.log", "a", encoding="utf-8", buffering=1)
+        sys.stdout = sys.stderr = log
+
+    _start_engine()
+    print("[Headless] Motor ativo. Ctrl+C para encerrar.")
+    try:
+        threading.Event().wait()
+    except KeyboardInterrupt:
+        print("[Headless] Encerrado.")
 
 
 def _auto_reconnect():
     """Tenta reconectar contas que possuem sessão salva."""
     from telegram_manager import telegram_manager
-    import database as db
 
     for conta in db.listar_contas():
         if conta.get("session"):
@@ -54,10 +74,15 @@ def _auto_reconnect():
                         telegram_manager.clients[c["id"]] = client
                         db.atualizar_conta(c["id"], client.session.save(), "conectada")
                         telegram_manager.restaurar_repasses_conta(c["id"])
+                        print(f"[Contas] {c['telefone']} conectada.")
+                    else:
+                        print(f"[Contas] {c['telefone']} sem sessão válida: reconecte pela GUI.")
 
-                telegram_manager._run(_try_connect())
-            except Exception:
-                pass
+                fut = telegram_manager._run(_try_connect())
+                fut.add_done_callback(lambda f, tel=conta["telefone"]: f.exception() and print(
+                    f"[Contas] Falha ao reconectar {tel}: {f.exception()}"))
+            except Exception as e:
+                print(f"[Contas] Falha ao reconectar {conta['telefone']}: {e}")
 
 
 if __name__ == "__main__":

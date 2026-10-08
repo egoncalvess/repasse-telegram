@@ -21,7 +21,22 @@ Ferramenta desktop para automatizar o repasse de mensagens entre grupos e canais
 - Python 3.10 ou superior
 - Conta Telegram com API ID e API Hash (gratuito em my.telegram.org)
 
-## Instalação
+## Executável (sem instalar nada)
+
+Cada push em `main` ou `etapa*/**` gera o `repasse_telegram.exe` no GitHub Actions:
+**Actions → execução mais recente → Artifacts**. Não precisa de Python nem de `pip` na máquina.
+
+## Modo headless (servidor / 24h)
+
+```bash
+repasse_telegram.exe --headless      # ou: python main.py --headless
+```
+
+Roda só o motor (repasses + agendador de nichos), sem janela. As contas precisam ter sido
+conectadas antes pela GUI (a sessão fica salva em `data/repasse.db`). Sem console, o log vai
+para `data/headless.log`.
+
+## Instalação (desenvolvimento)
 
 ```bash
 # 1. Clone ou baixe o projeto
