@@ -34,7 +34,10 @@ def main():
 
 
 def _start_engine():
-    """Sobe o motor: reconecta contas (que restauram seus repasses) e o agendador de nichos."""
+    """Sobe o motor: bot (publicação + painel), contas (que restauram seus repasses) e agendador."""
+    if db.get_config("bot_token"):
+        from telegram_manager import telegram_manager
+        telegram_manager.iniciar_bot()
     _auto_reconnect()
 
     from niche_scheduler import niche_scheduler

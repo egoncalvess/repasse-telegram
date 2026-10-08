@@ -441,6 +441,22 @@ def adicionar_preco_historico(produto_id: str, preco: float, data_str: str = Non
     conn.commit()
     conn.close()
 
+def contar_dias_historico(produto_id: str) -> int:
+    conn = get_conn()
+    n = conn.execute("SELECT COUNT(*) FROM nicho_precos_historico WHERE produto_id=?", (produto_id,)).fetchone()[0]
+    conn.close()
+    return n
+
+def contar_envios_hoje() -> int:
+    """Repasses com sucesso + ofertas de nicho enviadas hoje."""
+    conn = get_conn()
+    repasses = conn.execute("SELECT COUNT(*) FROM historico WHERE status='Sucesso' AND data LIKE ?",
+                            (datetime.now().strftime("%d/%m/%Y") + "%",)).fetchone()[0]
+    ofertas = conn.execute("SELECT COUNT(*) FROM nicho_disparos_status WHERE status='enviado' AND data=?",
+                           (datetime.now().strftime("%Y-%m-%d"),)).fetchone()[0]
+    conn.close()
+    return repasses + ofertas
+
 def listar_produtos_nicho(nicho: str = None, order_by: str = None, limit: int = 100):
     conn = get_conn()
     query = "SELECT * FROM nicho_produtos"

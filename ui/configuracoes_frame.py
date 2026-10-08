@@ -20,10 +20,12 @@ class ConfiguracoesFrame(ctk.CTkFrame):
         tab.pack(fill="both", expand=True, padx=16, pady=8)
 
         tab.add("API Telegram")
+        tab.add("Bot")
         tab.add("Geral")
         tab.add("Sobre")
 
         self._build_api_tab(tab.tab("API Telegram"))
+        self._build_bot_tab(tab.tab("Bot"))
         self._build_geral_tab(tab.tab("Geral"))
         self._build_sobre_tab(tab.tab("Sobre"))
 
@@ -94,6 +96,70 @@ class ConfiguracoesFrame(ctk.CTkFrame):
             db.set_config("phone_default", phone)
 
         messagebox.showinfo("Salvo", "Credenciais salvas com sucesso.")
+
+    # ── Bot ───────────────────────────────────────────────────────────────────
+
+    def _build_bot_tab(self, parent):
+        card = ctk.CTkFrame(parent, fg_color=("white", "#1e1e1e"), corner_radius=12)
+        card.pack(fill="both", expand=True, padx=8, pady=8)
+
+        ctk.CTkLabel(card, text="Bot de publicação e painel de controle",
+                     font=("Arial", 15, "bold")).pack(anchor="w", padx=20, pady=(20, 4))
+        ctk.CTkLabel(card,
+                     text="Crie o bot no @BotFather e adicione-o como administrador dos grupos/canais de destino.\n"
+                          "A conta continua só lendo as origens; quem publica é o bot (API oficial, sem risco de ban da conta).",
+                     font=("Arial", 11), text_color=("#64748b", "#94a3b8"), justify="left").pack(anchor="w", padx=20)
+
+        ctk.CTkLabel(card, text="Token do bot").pack(anchor="w", padx=20, pady=(16, 4))
+        self._bot_token = ctk.CTkEntry(card, width=400, placeholder_text="123456789:AA...", show="*")
+        self._bot_token.pack(anchor="w", padx=20)
+        self._bot_token.insert(0, db.get_config("bot_token") or "")
+
+        ctk.CTkLabel(card, text="Seu ID de usuário (admin do painel)").pack(anchor="w", padx=20, pady=(12, 4))
+        self._bot_admin = ctk.CTkEntry(card, width=400,
+                                       placeholder_text="Mande /start ao bot: ele responde com o seu ID")
+        self._bot_admin.pack(anchor="w", padx=20)
+        self._bot_admin.insert(0, db.get_config("bot_admin_id") or "")
+
+        self._via_bot = ctk.BooleanVar(value=db.get_config("publicar_via_bot", "1") == "1")
+        ctk.CTkSwitch(card, text="Publicar pelo bot (desligado = publica pela conta, modo antigo)",
+                      variable=self._via_bot).pack(anchor="w", padx=20, pady=(16, 0))
+
+        ctk.CTkButton(card, text="Salvar e conectar bot", command=self._save_bot,
+                      fg_color=BTN_BLUE[0], hover_color=BTN_BLUE[1],
+                      width=200).pack(anchor="w", padx=20, pady=(20, 6))
+        self._bot_status = ctk.CTkLabel(card, text=self._texto_status_bot(), font=("Arial", 12))
+        self._bot_status.pack(anchor="w", padx=20)
+
+    def _texto_status_bot(self):
+        from telegram_manager import telegram_manager
+        return "🟢 Bot conectado" if telegram_manager.bot else "⚪ Bot desconectado"
+
+    def _save_bot(self):
+        token = self._bot_token.get().strip()
+        admin = self._bot_admin.get().strip()
+        if token and ":" not in token:
+            messagebox.showwarning("Aviso", "Token inválido. Copie o token completo do @BotFather.")
+            return
+        if admin and not admin.isdigit():
+            messagebox.showwarning("Aviso", "O ID do admin deve ser numérico.")
+            return
+
+        db.set_config("bot_token", token)
+        db.set_config("bot_admin_id", admin)
+        db.set_config("publicar_via_bot", "1" if self._via_bot.get() else "0")
+        if not token:
+            self._bot_status.configure(text="⚪ Sem token: publicação pela conta")
+            return
+
+        self._bot_status.configure(text="🟡 Conectando...")
+        from telegram_manager import telegram_manager
+
+        def cb(username, error):
+            txt = f"🔴 Falha: {error}" if error else f"🟢 @{username} conectado. Mande /start para ele no Telegram."
+            self.after(0, lambda: self._bot_status.configure(text=txt))
+
+        telegram_manager.iniciar_bot(cb)
 
     # ── Geral ─────────────────────────────────────────────────────────────────
 

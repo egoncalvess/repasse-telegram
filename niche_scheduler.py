@@ -8,28 +8,7 @@ import json
 from datetime import datetime
 import database as db
 import niche_scraper as scraper
-
-def download_image(url: str) -> str:
-    """Baixa a imagem do produto localmente para anexo no Telegram."""
-    if not url:
-        return None
-    try:
-        from pathlib import Path
-        img_req = urllib.request.Request(
-            url,
-            headers={"User-Agent": "Mozilla/5.0"}
-        )
-        data_dir = Path("data")
-        data_dir.mkdir(exist_ok=True)
-        temp_path = data_dir / f"temp_post_img_{random.randint(1000, 9999)}.jpg"
-        with urllib.request.urlopen(img_req, timeout=6) as img_res:
-            temp_path.write_bytes(img_res.read())
-        return str(temp_path.resolve())
-    except Exception as e:
-        print(f"[Scheduler] Erro ao baixar imagem {url}: {e}")
-        return None
-
-
+from oferta import publicar_oferta
 
 def _post_json_with_redirects(url: str, payload_dict: dict, timeout: int = 30) -> tuple[int, str]:
     """Envia POST JSON com suporte a redirecionamentos via requests (se instalado) ou urllib como fallback."""
@@ -230,7 +209,9 @@ class NicheScheduler:
         while self.running:
             try:
                 ativo = db.get_config("nicho_scheduler_ativo", "0")
-                if ativo == "1":
+                if db.get_config("pausado", "0") == "1":
+                    self.last_status = "Pausado (painel do bot)"
+                elif ativo == "1":
                     self.last_status = "Ativo (Aguardando horário)"
                     hora_post = db.get_config("nicho_scheduler_hora", "09:00")
                     ultimo_dia = db.get_config("nicho_scheduler_ultimo_dia_rodado", "")
@@ -311,9 +292,8 @@ class NicheScheduler:
             return True
             
         from telegram_manager import telegram_manager
-        client = telegram_manager.clients.get(conta_id)
-        if not client:
-            err_msg = "Telegram offline ou desconectado. Conecte a conta primeiro!"
+        if not telegram_manager.via_bot() and not telegram_manager.clients.get(conta_id):
+            err_msg = "Bot não configurado e conta remetente offline. Configure o bot ou conecte a conta!"
             self._log(f"❌ {err_msg}")
             db.salvar_disparo_status(None, datetime.now().strftime("%Y-%m-%d"), "falha", err_msg)
             self.last_status = "Falha: Conta offline"
@@ -327,38 +307,7 @@ class NicheScheduler:
                 aff_url = gerar_url_afiliada_produto(p)
                 p["url_afiliado"] = aff_url
                 db.salvar_produto_nicho(p)
-                
-                preco_atual_fmt = f"R$ {p['preco_atual']:.2f}".replace(".", ",") if p['preco_atual'] else "Consultar no site"
-                menor_preco_fmt = f"R$ {p['menor_preco']:.2f}".replace(".", ",") if p['menor_preco'] else preco_atual_fmt
-                menor_data = datetime.strptime(p['menor_preco_data'], "%Y-%m-%d").strftime("%d/%m/%Y") if p['menor_preco_data'] else datetime.now().strftime("%d/%m/%Y")
-                
-                text_copy = (
-                    f"🔥 *OFERTA IMPERDÍVEL DO DIA!* 🔥\n\n"
-                    f"📦 *{p['nome']}*\n"
-                    f"🏷️ Nicho: *{p['nicho']}*\n"
-                    f"🏪 Loja: *{p['marketplace']}*\n\n"
-                    f"💵 Preço de Hoje: *{preco_atual_fmt}*\n"
-                    f"📉 *MENOR PREÇO HISTÓRICO:* *{menor_preco_fmt}*\n"
-                    f"📅 (Registrado em: {menor_data})\n\n"
-                    f"🛒 *Compre com segurança pelo link de afiliado:* {aff_url}"
-                )
-                
-                local_img = download_image(p["imagem_url"])
-                
-                async def _send_tg(client=client, dest=destino, text=text_copy, file=local_img):
-                    dest_entity = await telegram_manager.resolve_entity(client, dest)
-                    await client.send_message(dest_entity, text, file=file)
-                    return True
-                    
-                future = telegram_manager._run(_send_tg())
-                future.result(timeout=25)
-                
-                if local_img and os.path.exists(local_img):
-                    try:
-                        os.remove(local_img)
-                    except Exception:
-                        pass
-                
+                publicar_oferta(p, conta_id, destino)
                 db.salvar_disparo_status(p["id"], hoje_data, "enviado")
                 self._log(f"✅ Oferta [{idx}/{len(produtos)}] enviada: {p['nome'][:30]}...")
                 sucessos += 1

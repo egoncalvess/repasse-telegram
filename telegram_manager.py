@@ -3,14 +3,16 @@ Gerenciador Telegram — roda Telethon em thread separada com asyncio.
 Toda comunicação com a UI é via callbacks thread-safe.
 """
 import asyncio
+import io
 import threading
 import json
 import re
 import time
 from datetime import datetime
 
-from telethon import TelegramClient, events
+from telethon import TelegramClient, events, Button
 from telethon.sessions import StringSession
+from telethon.tl.types import MessageMediaWebPage
 
 import database as db
 
@@ -22,6 +24,7 @@ class TelegramManager:
         self._thread = threading.Thread(target=self._run_loop, daemon=True)
         self._thread.start()
 
+        self.bot: TelegramClient | None = None              # bot oficial: publica e serve o painel
         self.clients: dict[int, TelegramClient] = {}       # conta_id -> client
         self._pending: dict[int, TelegramClient] = {}      # aguardando código
         self._handlers: dict[int, callable] = {}           # repasse_id -> handler fn
@@ -53,6 +56,75 @@ class TelegramManager:
         if not api_id or not api_hash:
             raise ValueError("Configure API ID e API Hash em Configurações → API Telegram.")
         return int(api_id), api_hash
+
+    # ── Bot (publicação + painel) ────────────────────────────────────────────
+
+    async def _start_bot(self):
+        token = (db.get_config("bot_token") or "").strip()
+        if not token:
+            return None
+        api_id, api_hash = self.get_creds()
+        if self.bot:
+            await self.bot.disconnect()
+            self.bot = None
+
+        # Sessão salva como "<bot_id>|<session>": evita re-login a cada start e troca de bot com sessão errada
+        bot_id = token.split(":")[0]
+        salva = db.get_config("bot_session") or ""
+        sessao = salva.partition("|")[2] if salva.startswith(bot_id + "|") else ""
+
+        bot = TelegramClient(StringSession(sessao), api_id, api_hash)
+        await bot.start(bot_token=token)
+        db.set_config("bot_session", f"{bot_id}|{bot.session.save()}")
+
+        import admin_panel
+        admin_panel.registrar(bot, self)
+        self.bot = bot
+        return (await bot.get_me()).username
+
+    def iniciar_bot(self, callback=None):
+        def _done(fut):
+            try:
+                res, err = fut.result(), None
+            except Exception as e:
+                res, err = None, str(e)
+            if err:
+                print(f"[Bot] Falha ao iniciar: {err}")
+            elif res:
+                print(f"[Bot] @{res} online.")
+            if callback:
+                callback(res, err)
+
+        self._run(self._start_bot()).add_done_callback(_done)
+
+    def via_bot(self) -> bool:
+        return self.bot is not None and db.get_config("publicar_via_bot", "1") == "1"
+
+    async def enviar(self, conta_id, destino, texto, file=None, botao_url=None, html=False):
+        """Publica no destino: pelo bot quando ativo (API oficial, sem risco de ban da conta), senão pela conta."""
+        if self.via_bot():
+            client = self.bot
+            buttons = [Button.url("🛒 Ver oferta", botao_url)] if botao_url else None
+        else:
+            client = self.clients.get(conta_id)
+            if not client:
+                raise RuntimeError("Conta remetente offline e bot não configurado.")
+            buttons = None  # contas de usuário não enviam botões
+        entity = await self.resolve_entity(client, destino)
+        return await client.send_message(entity, texto, file=file, buttons=buttons,
+                                         parse_mode="html" if html else ())
+
+    async def _midia_para_envio(self, msg):
+        """Mídia da origem pronta para reenvio. O bot não enxerga arquivos da conta: baixa em memória."""
+        if not msg.media or isinstance(msg.media, MessageMediaWebPage):
+            return None  # prévia de link é gerada de novo pelo próprio Telegram
+        if not self.via_bot():
+            return msg.media
+        buf = io.BytesIO()
+        await msg.download_media(file=buf)
+        buf.name = "arquivo" + (msg.file.ext or "")
+        buf.seek(0)
+        return buf
 
     # ── Conexão de conta ─────────────────────────────────────────────────────
 
@@ -176,12 +248,14 @@ class TelegramManager:
                 try:
                     return await client.get_entity(val)
                 except Exception:
-                    # Se falhar e for um canal positivo digitado sem prefixo, tenta -100 prefixado
-                    if val > 0 and len(ident_str) >= 8:
-                        try:
-                            return await client.get_entity(int(f"-100{val}"))
-                        except Exception:
-                            pass
+                    # ID salvo sem prefixo: tenta canal/supergrupo (-100…) e grupo básico (-…).
+                    # O bot depende disso: ele não tem lista de diálogos para resolver pelo nome.
+                    if val > 0:
+                        for marcado in (int(f"-100{val}"), -val):
+                            try:
+                                return await client.get_entity(marcado)
+                            except Exception:
+                                pass
             except ValueError:
                 pass
 
@@ -227,24 +301,27 @@ class TelegramManager:
             if not current or not current["ativo"]:
                 return
 
-            # Limite diário
-            limite = current["limite_diario"]
-            if limite > 0:
-                today = datetime.now().strftime("%Y-%m-%d")
-                cnt = self._daily_count.get(repasse_id, {"date": "", "count": 0})
-                if cnt["date"] != today:
-                    cnt = {"date": today, "count": 0}
-                if cnt["count"] >= limite:
-                    return
-                cnt["count"] += 1
-                self._daily_count[repasse_id] = cnt
+            # Pausa global (painel do bot)
+            if db.get_config("pausado", "0") == "1":
+                return
 
-            # Horário
+            # Limite diário (só conta mensagens efetivamente enviadas, ver final do handler)
+            limite = current["limite_diario"]
+            today = datetime.now().strftime("%Y-%m-%d")
+            cnt = self._daily_count.get(repasse_id, {"date": "", "count": 0})
+            if cnt["date"] != today:
+                cnt = {"date": today, "count": 0}
+                self._daily_count[repasse_id] = cnt
+            if limite > 0 and cnt["count"] >= limite:
+                return
+
+            # Horário (aceita janela que cruza a meia-noite, ex.: 22:00–06:00)
             h_ini = current["horario_inicio"] or "00:00"
             h_fim = current["horario_fim"] or "00:00"
             if h_ini != "00:00" or h_fim != "00:00":
                 now_t = datetime.now().strftime("%H:%M")
-                if not (h_ini <= now_t <= h_fim):
+                dentro = h_ini <= now_t <= h_fim if h_ini <= h_fim else (now_t >= h_ini or now_t <= h_fim)
+                if not dentro:
                     return
 
             text = event.message.text or ""
@@ -298,15 +375,19 @@ class TelegramManager:
             if delay > 0:
                 await asyncio.sleep(delay)
 
-            # Enviar para destinos
+            # Enviar para destinos (bot se ativo, senão a própria conta)
+            enviado = False
             for dest in destinos:
                 try:
-                    dest_entity = await self.resolve_entity(client, dest["grupo_id"])
-                    await client.send_message(dest_entity, text, file=event.message.media)
+                    media = await self._midia_para_envio(event.message)
+                    await self.enviar(r["conta_id"], dest["grupo_id"], text, file=media)
                     db.incrementar_repasse(repasse_id)
                     db.adicionar_historico(repasse_id, dest["grupo_nome"], "Sucesso")
+                    enviado = True
                 except Exception as exc:
                     db.adicionar_historico(repasse_id, dest["grupo_nome"], "Falha", str(exc))
+            if enviado:
+                cnt["count"] += 1
 
         # Registrar handler no source
         try:

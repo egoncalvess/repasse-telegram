@@ -5,7 +5,8 @@ import os
 from datetime import datetime
 import database as db
 import niche_scraper as scraper
-from niche_scheduler import niche_scheduler, download_image, gerar_url_afiliada_produto
+from niche_scheduler import niche_scheduler, gerar_url_afiliada_produto
+from oferta import publicar_oferta
 
 BTN_BLUE  = ("#1a6fd4", "#1558ab")
 BTN_GRAY  = ("#cbd5e1", "#475569")
@@ -429,46 +430,9 @@ class NichoDashboardFrame(ctk.CTkFrame):
         
         def _worker():
             try:
-                from telegram_manager import telegram_manager
-                client = telegram_manager.clients.get(conta_id)
-                if not client:
-                    raise RuntimeError("Sessão Telegram offline.")
-                    
-                aff_url = gerar_url_afiliada_produto(p)
-                p["url_afiliado"] = aff_url
+                p["url_afiliado"] = gerar_url_afiliada_produto(p)
                 db.salvar_produto_nicho(p)
-                
-                preco_atual_fmt = f"R$ {p['preco_atual']:.2f}".replace(".", ",") if p['preco_atual'] else "Consultar no site"
-                menor_preco_fmt = f"R$ {p['menor_preco']:.2f}".replace(".", ",") if p['menor_preco'] else preco_atual_fmt
-                menor_data = datetime.strptime(p['menor_preco_data'], "%Y-%m-%d").strftime("%d/%m/%Y") if p['menor_preco_data'] else datetime.now().strftime("%d/%m/%Y")
-                
-                text_copy = (
-                    f"🔥 *OFERTA EXCLUSIVA INDIVIDUAL!* 🔥\n\n"
-                    f"📦 *{p['nome']}*\n"
-                    f"🏷️ Nicho: *{p['nicho']}*\n"
-                    f"🏪 Loja: *{p['marketplace']}*\n\n"
-                    f"💵 Preço Atual: *{preco_atual_fmt}*\n"
-                    f"📉 *MENOR PREÇO HISTÓRICO:* *{menor_preco_fmt}*\n"
-                    f"📅 (Registrado em: {menor_data})\n\n"
-                    f"🛒 *Compre com segurança pelo link de afiliado:* {aff_url}"
-                )
-                
-                local_img = download_image(p["imagem_url"])
-                
-                async def _send():
-                    dest_entity = await telegram_manager.resolve_entity(client, destino)
-                    await client.send_message(dest_entity, text_copy, file=local_img)
-                    return True
-                    
-                future = telegram_manager._run(_send())
-                future.result(timeout=25)
-                
-                if local_img and os.path.exists(local_img):
-                    try:
-                        os.remove(local_img)
-                    except Exception:
-                        pass
-                        
+                publicar_oferta(p, conta_id, destino)
                 db.salvar_disparo_status(p["id"], datetime.now().strftime("%Y-%m-%d"), "enviado")
                 self.after(0, lambda: [
                     self._append_console_log(f"✅ Oferta individual enviada: {p['nome'][:30]}..."),
