@@ -20,7 +20,11 @@ def brl(valor: float) -> str:
 def formatar_oferta(p: dict, url: str, dias_monitorados: int = 0) -> str:
     preco, menor = p.get("preco_atual"), p.get("menor_preco")
     linhas = [f"🔥 <b>{html.escape(p['nome'][:200])}</b>", ""]
-    linhas.append(f"💰 <b>{brl(preco)}</b>" if preco else "💰 Consulte o preço no site")
+    orig = p.get("preco_original")  # preço riscado informado pela própria loja
+    if preco and orig and orig > preco:
+        linhas.append(f"💰 De <s>{brl(orig)}</s> por <b>{brl(preco)}</b> (-{round((1 - preco / orig) * 100)}%)")
+    else:
+        linhas.append(f"💰 <b>{brl(preco)}</b>" if preco else "💰 Consulte o preço no site")
     if preco and menor and preco <= menor and dias_monitorados >= DIAS_MIN_HISTORICO:
         linhas.append(f"📉 Menor preço em {dias_monitorados} dias de monitoramento")
     linhas.append(f"🏪 {html.escape(p['marketplace'])}")

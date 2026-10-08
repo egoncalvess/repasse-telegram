@@ -185,6 +185,11 @@ def gerar_url_afiliada_produto(p: dict) -> str:
         pass
     return original_url
 
+def _chave(p: dict) -> str:
+    """Mesma chave de produto usada pelo repasse: um produto não sai pelos dois caminhos em sequência."""
+    from dedup import chave_produto
+    return chave_produto(p["url_original"]) or p["id"]
+
 class NicheScheduler:
     def __init__(self):
         self.thread = None
@@ -282,10 +287,10 @@ class NicheScheduler:
             self.last_status = "Erro: Conta inválida"
             return False
 
-        # Só publica o que foi coletado hoje: evita repostar preço velho (ou dado antigo do fallback removido)
+        # Só publica o que foi coletado hoje (preço fresco) e não saiu nos últimos 3 dias
         hoje = datetime.now().strftime("%Y-%m-%d")
-        produtos = [p for p in db.listar_produtos_nicho(order_by="desconto", limit=100)
-                    if p["ultima_atualizacao"] == hoje][:10]
+        produtos = [p for p in db.listar_produtos_nicho(order_by="desconto", limit=200, atualizado_em=hoje)
+                    if not db.ofertas_recentes({_chave(p)}, 72)][:10]
         if not produtos:
             self._log("⚠️ Nenhum produto encontrado para postagem.")
             self.last_status = "Concluído (Nenhuma oferta)"
@@ -308,6 +313,7 @@ class NicheScheduler:
                 p["url_afiliado"] = aff_url
                 db.salvar_produto_nicho(p)
                 publicar_oferta(p, conta_id, destino)
+                db.marcar_ofertas({_chave(p)})
                 db.salvar_disparo_status(p["id"], hoje_data, "enviado")
                 self._log(f"✅ Oferta [{idx}/{len(produtos)}] enviada: {p['nome'][:30]}...")
                 sucessos += 1

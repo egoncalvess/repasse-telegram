@@ -108,6 +108,11 @@ def init_db():
             UNIQUE(data, plataforma)
         );
 
+        CREATE TABLE IF NOT EXISTS ofertas_vistas (
+            chave    TEXT PRIMARY KEY,
+            visto_em TEXT NOT NULL
+        );
+
         CREATE TABLE IF NOT EXISTS nicho_disparos_status (
             id         INTEGER PRIMARY KEY AUTOINCREMENT,
             data       TEXT NOT NULL,
@@ -120,6 +125,12 @@ def init_db():
     # Migração automática de banco para adicionar coluna 'tipo' caso não exista
     try:
         conn.execute("ALTER TABLE contas ADD COLUMN tipo TEXT DEFAULT 'telegram'")
+        conn.commit()
+    except sqlite3.OperationalError:
+        pass
+    # Migração: preço riscado real informado pela loja (base do % de desconto)
+    try:
+        conn.execute("ALTER TABLE nicho_produtos ADD COLUMN preco_original REAL")
         conn.commit()
     except sqlite3.OperationalError:
         pass
@@ -389,8 +400,8 @@ def salvar_produto_nicho(p: dict):
     
     conn.execute("""
         INSERT OR REPLACE INTO nicho_produtos 
-            (id, nome, nicho, marketplace, url_original, url_afiliado, imagem_url, preco_atual, menor_preco, menor_preco_data, ultima_atualizacao)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            (id, nome, nicho, marketplace, url_original, url_afiliado, imagem_url, preco_atual, menor_preco, menor_preco_data, ultima_atualizacao, preco_original)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
         p["id"],
         p["nome"],
@@ -402,7 +413,8 @@ def salvar_produto_nicho(p: dict):
         preco_atual,
         menor_preco,
         menor_preco_data,
-        data_atual
+        data_atual,
+        p.get("preco_original")
     ))
     
     # Insere também no histórico de preços se houver preço
@@ -441,6 +453,26 @@ def adicionar_preco_historico(produto_id: str, preco: float, data_str: str = Non
     conn.commit()
     conn.close()
 
+def ofertas_recentes(chaves, horas: int = 24) -> set:
+    """Quais dessas chaves de produto já foram publicadas nas últimas X horas."""
+    if not chaves:
+        return set()
+    conn = get_conn()
+    marks = ",".join("?" * len(chaves))
+    rows = conn.execute(
+        f"SELECT chave FROM ofertas_vistas WHERE chave IN ({marks}) AND visto_em >= datetime('now', 'localtime', ?)",
+        (*chaves, f"-{horas} hours")).fetchall()
+    conn.close()
+    return {r["chave"] for r in rows}
+
+def marcar_ofertas(chaves):
+    conn = get_conn()
+    conn.executemany("INSERT OR REPLACE INTO ofertas_vistas (chave, visto_em) VALUES (?, datetime('now', 'localtime'))",
+                     [(c,) for c in chaves])
+    conn.execute("DELETE FROM ofertas_vistas WHERE visto_em < datetime('now', 'localtime', '-30 days')")
+    conn.commit()
+    conn.close()
+
 def contar_dias_historico(produto_id: str) -> int:
     conn = get_conn()
     n = conn.execute("SELECT COUNT(*) FROM nicho_precos_historico WHERE produto_id=?", (produto_id,)).fetchone()[0]
@@ -457,21 +489,24 @@ def contar_envios_hoje() -> int:
     conn.close()
     return repasses + ofertas
 
-def listar_produtos_nicho(nicho: str = None, order_by: str = None, limit: int = 100):
+def listar_produtos_nicho(nicho: str = None, order_by: str = None, limit: int = 100, atualizado_em: str = None):
     conn = get_conn()
-    query = "SELECT * FROM nicho_produtos"
+    query = "SELECT * FROM nicho_produtos WHERE 1=1"
     params = []
     
     if nicho and nicho.strip().lower() not in ["todos os nichos", "todos", "all"]:
-        query += " WHERE nicho = ?"
+        query += " AND nicho = ?"
         params.append(nicho)
+    if atualizado_em:
+        query += " AND ultima_atualizacao = ?"
+        params.append(atualizado_em)
         
     if order_by == "preco_asc":
         query += " ORDER BY preco_atual ASC"
     elif order_by == "preco_desc":
         query += " ORDER BY preco_atual DESC"
     elif order_by == "desconto":
-        query += " ORDER BY (menor_preco - preco_atual) DESC" # Produtos com maior desconto histórico
+        query += " ORDER BY COALESCE(1 - preco_atual / NULLIF(preco_original, 0), 0) DESC"  # maior % de desconto real
     else:
         query += " ORDER BY ultima_atualizacao DESC"
         

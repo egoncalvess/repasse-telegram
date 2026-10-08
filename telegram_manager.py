@@ -355,6 +355,17 @@ class TelegramManager:
             if filtros.get("audios") and (msg.audio or msg.voice):
                 return
 
+            # Ofertas: exige link de loja e/ou ignora produto já publicado nas últimas 24h
+            chaves = set()
+            if filtros.get("somente_ofertas") or filtros.get("sem_repetidas"):
+                import dedup
+                chaves = await dedup.chaves_do_texto(text)
+                if filtros.get("somente_ofertas") and not chaves:
+                    return
+                if filtros.get("sem_repetidas") and chaves and chaves <= db.ofertas_recentes(chaves):
+                    db.adicionar_historico(repasse_id, "-", "Ignorada", "Produto já publicado nas últimas 24h")
+                    return
+
             # Substituições manuais
             for sub in subs:
                 busca = sub.get("busca", "")
@@ -388,6 +399,8 @@ class TelegramManager:
                     db.adicionar_historico(repasse_id, dest["grupo_nome"], "Falha", str(exc))
             if enviado:
                 cnt["count"] += 1
+                if chaves:
+                    db.marcar_ofertas(chaves)
 
         # Registrar handler no source
         try:
