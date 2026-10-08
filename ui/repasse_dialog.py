@@ -104,6 +104,7 @@ class RepasseDialog(ctk.CTkToplevel):
         frow_spec = ctk.CTkFrame(main, fg_color="transparent")
         frow_spec.pack(anchor="w", padx=16, pady=(4, 4))
         self._f_aff    = _check(frow_spec, "Substituição Inteligente de Links Afiliados")
+        self._f_exigir = _check(frow_spec, "Só repassar se todos os links virarem meus")
         frow_of = ctk.CTkFrame(main, fg_color="transparent")
         frow_of.pack(anchor="w", padx=16, pady=(0, 4))
         self._f_ofertas = _check(frow_of, "Somente ofertas (msg com link de loja)")
@@ -206,6 +207,7 @@ class RepasseDialog(ctk.CTkToplevel):
         if filtros.get("videos"): self._f_vid.select()
         if filtros.get("audios"): self._f_aud.select()
         if filtros.get("substituir_afiliados"): self._f_aff.select()
+        if filtros.get("exigir_afiliado"): self._f_exigir.select()
         if filtros.get("somente_ofertas"): self._f_ofertas.select()
         if filtros.get("sem_repetidas"): self._f_dedup.select()
 
@@ -371,6 +373,7 @@ class RepasseDialog(ctk.CTkToplevel):
             "videos":  bool(self._f_vid.get()),
             "audios":  bool(self._f_aud.get()),
             "substituir_afiliados": bool(self._f_aff.get()),
+            "exigir_afiliado": bool(self._f_exigir.get()),
             "somente_ofertas": bool(self._f_ofertas.get()),
             "sem_repetidas": bool(self._f_dedup.get()),
         }

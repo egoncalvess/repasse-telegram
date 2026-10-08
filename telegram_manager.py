@@ -383,10 +383,16 @@ class TelegramManager:
             # Substituição inteligente de afiliados
             if filtros.get("substituir_afiliados"):
                 try:
-                    from affiliate_helper import process_text_urls
-                    text = await process_text_urls(text)
+                    from affiliate_helper import converter_links
+                    text, nao_convertidos = await converter_links(text)
                 except Exception as aff_err:
                     db.adicionar_historico(repasse_id, "-", "Erro Afiliados", str(aff_err))
+                    nao_convertidos = ["(erro na conversão)"]
+                # Não divulga link que renderia comissão para outra pessoa
+                if nao_convertidos and filtros.get("exigir_afiliado"):
+                    db.adicionar_historico(repasse_id, "-", "Ignorada",
+                                           "Link sem conversão p/ afiliado: " + ", ".join(nao_convertidos)[:300])
+                    return
 
             # Delay
             delay = current["delay"] or 1

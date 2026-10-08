@@ -26,6 +26,20 @@ EMOJI = {
 }
 
 
+AJUDA_TAG = ("Mercado Livre: no Portal do Afiliado, gere um link de qualquer produto em 'Gerador de link', "
+             "escolha LINK COMPLETO e cole aqui (o app extrai matt_word e matt_tool).\n"
+             "Amazon: sua tag (ex.: seunome-20). Magalu: nome da sua loja Magazine Você.")
+
+
+def _validar_tag(tipo: str, tag: str, parent) -> str:
+    """Normaliza a tag e avisa se ela não permite converter links."""
+    from affiliate_helper import normalizar_tag
+    tag, aviso = normalizar_tag(tipo, tag)
+    if aviso:
+        messagebox.showwarning("Atenção", aviso, parent=parent)
+    return tag
+
+
 class IntegracoesFrame(ctk.CTkFrame):
     def __init__(self, parent):
         super().__init__(parent, corner_radius=0, fg_color=("#f1f5fb", "#121212"))
@@ -47,6 +61,8 @@ class IntegracoesFrame(ctk.CTkFrame):
                       fg_color=("#64748b", "#4b5563"), hover_color=("#475569", "#374151"), width=90).pack(side="left", padx=4)
         ctk.CTkButton(bar, text="Remover", command=self._remove,
                       fg_color=BTN_RED[0], hover_color=BTN_RED[1], width=90).pack(side="left", padx=4)
+        ctk.CTkButton(bar, text="🧪 Testar link", command=self._testar,
+                      fg_color=("#64748b", "#4b5563"), hover_color=("#475569", "#374151"), width=110).pack(side="left", padx=4)
 
         card = ctk.CTkFrame(self, fg_color=("white", "#1e1e1e"), corner_radius=12)
         card.pack(fill="both", expand=True, padx=16, pady=8)
@@ -65,7 +81,8 @@ class IntegracoesFrame(ctk.CTkFrame):
         info = ctk.CTkFrame(self, fg_color=("#eff6ff", "#1e293b"), corner_radius=8)
         info.pack(fill="x", padx=16, pady=(0, 12))
         ctk.CTkLabel(info,
-                     text="ℹ️  A tag de afiliado é inserida automaticamente nas substituições dos repasses que possuem esta integração ativa.",
+                     text="ℹ️  Links de loja nos repasses (com 'Substituição Inteligente') e no Radar são reconstruídos com a SUA afiliação; "
+                          "tags de outros afiliados são descartadas. Use '🧪 Testar link' para conferir antes de publicar.",
                      font=("Arial", 11), text_color=("#1e40af", "#93c5fd"),
                      wraplength=700, justify="left").pack(padx=16, pady=10, anchor="w")
 
@@ -89,8 +106,9 @@ class IntegracoesFrame(ctk.CTkFrame):
         ctk.CTkLabel(row, text=intg["tipo"],      width=160, anchor="w", font=("Arial", 12)).pack(side="left")
         
         tag_text = intg["tag"] or "-"
-        if intg.get("cookie"):
-            tag_text += " 🍪"
+        if intg["tipo"] == "mercadolivre":
+            from affiliate_helper import parametros_ml
+            tag_text = ("✅ " + tag_text) if len(parametros_ml(tag_text)) == 2 else "⚠️ falta link completo do portal"
             
         ctk.CTkLabel(row, text=tag_text, width=240, anchor="w", font=("Arial", 12),
                      text_color=("#64748b", "#94a3b8")).pack(side="left")
@@ -117,6 +135,21 @@ class IntegracoesFrame(ctk.CTkFrame):
             db.remover_integracao(self._selected)
             self._selected = None
             self.refresh()
+
+    def _testar(self):
+        url = ctk.CTkInputDialog(text="Cole um link de oferta (qualquer loja, pode ser encurtado):",
+                                 title="Testar conversão").get_input()
+        if not url:
+            return
+        import asyncio
+        from affiliate_helper import converter_links
+        texto, nao = asyncio.run(converter_links(url.strip()))
+        if nao:
+            messagebox.showwarning("Não convertido",
+                                   f"Este link NÃO vira afiliado seu:\n{nao[0]}\n\n"
+                                   "Confira se a loja tem integração ativa (ML: link completo do portal).")
+        else:
+            messagebox.showinfo("Convertido", f"Original:\n{url.strip()}\n\nSeu link:\n{texto}")
 
     def _edit(self):
         if not self._selected:
@@ -155,43 +188,25 @@ class AdicionarIntegracaoDialog(ctk.CTkToplevel):
                           values=list(TIPOS.keys()), width=340)
         self._tipo_menu.pack(pady=(2, 10))
 
-        ctk.CTkLabel(self, text="Tag / ID de Afiliado", font=("Arial", 11, "bold")).pack(anchor="w", padx=40)
+        ctk.CTkLabel(self, text="Tag de afiliado (ML: link completo do portal)", font=("Arial", 11, "bold")).pack(anchor="w", padx=40)
         self._tag = ctk.CTkEntry(self, width=340, placeholder_text="Sua tag de afiliado")
         self._tag.pack(pady=(2, 10))
 
-        ctk.CTkLabel(self, text="Dados da sessão / Cookies (Opcional - p/ Mercado Livre)", font=("Arial", 11, "bold")).pack(anchor="w", padx=40)
-        self._cookie = ctk.CTkTextbox(self, width=340, height=130, border_width=1)
-        self._cookie.pack(pady=(2, 16))
-
-        # Dynamic placeholder for cookie textbox
-        self._cookie.insert("1.0", "Cole aqui o JSON de cookies ou o texto raw da sessão...")
-        self._cookie.bind("<FocusIn>", self._clear_placeholder)
-        self._cookie.bind("<FocusOut>", self._add_placeholder)
+        ctk.CTkLabel(self, text=AJUDA_TAG, font=("Arial", 11), wraplength=340, justify="left",
+                     text_color=("#64748b", "#94a3b8")).pack(padx=40, pady=(0, 16), anchor="w")
 
         ctk.CTkButton(self, text="Salvar", command=self._save, width=140, fg_color=BTN_BLUE[0], hover_color=BTN_BLUE[1]).pack(pady=(0, 16))
-
-    def _clear_placeholder(self, event):
-        val = self._cookie.get("1.0", "end-1c").strip()
-        if val == "Cole aqui o JSON de cookies ou o texto raw da sessão...":
-            self._cookie.delete("1.0", "end")
-
-    def _add_placeholder(self, event):
-        val = self._cookie.get("1.0", "end-1c").strip()
-        if not val:
-            self._cookie.insert("1.0", "Cole aqui o JSON de cookies ou o texto raw da sessão...")
 
     def _save(self):
         nome = self._nome.get().strip()
         tag  = self._tag.get().strip()
         tipo = TIPOS.get(self._tipo_var.get(), "outro")
-        cookie = self._cookie.get("1.0", "end-1c").strip()
-        if cookie == "Cole aqui o JSON de cookies ou o texto raw da sessão...":
-            cookie = ""
             
         if not nome:
             messagebox.showwarning("Aviso", "Informe o nome.", parent=self)
             return
-        db.adicionar_integracao(nome, tipo, tag, cookie)
+        tag = _validar_tag(tipo, tag, self)
+        db.adicionar_integracao(nome, tipo, tag, "")
         self.destroy()
         self._parent.refresh()
 
@@ -224,47 +239,26 @@ class EditarIntegracaoDialog(ctk.CTkToplevel):
                           values=list(TIPOS.keys()), width=340)
         self._tipo_menu.pack(pady=(2, 10))
 
-        ctk.CTkLabel(self, text="Tag / ID de Afiliado", font=("Arial", 11, "bold")).pack(anchor="w", padx=40)
+        ctk.CTkLabel(self, text="Tag de afiliado (ML: link completo do portal)", font=("Arial", 11, "bold")).pack(anchor="w", padx=40)
         self._tag = ctk.CTkEntry(self, width=340)
         self._tag.insert(0, intg.get("tag", ""))
         self._tag.pack(pady=(2, 10))
 
-        ctk.CTkLabel(self, text="Dados da sessão / Cookies (Opcional - p/ Mercado Livre)", font=("Arial", 11, "bold")).pack(anchor="w", padx=40)
-        self._cookie = ctk.CTkTextbox(self, width=340, height=130, border_width=1)
-        self._cookie.pack(pady=(2, 16))
-
-        existing_cookie = intg.get("cookie", "")
-        if existing_cookie:
-            self._cookie.insert("1.0", existing_cookie)
-        else:
-            self._cookie.insert("1.0", "Cole aqui o JSON de cookies ou o texto raw da sessão...")
-        self._cookie.bind("<FocusIn>", self._clear_placeholder)
-        self._cookie.bind("<FocusOut>", self._add_placeholder)
+        ctk.CTkLabel(self, text=AJUDA_TAG, font=("Arial", 11), wraplength=340, justify="left",
+                     text_color=("#64748b", "#94a3b8")).pack(padx=40, pady=(0, 16), anchor="w")
 
         ctk.CTkButton(self, text="💾 Salvar Alterações", command=self._save, width=160,
                       fg_color=BTN_BLUE[0], hover_color=BTN_BLUE[1]).pack(pady=(0, 16))
-
-    def _clear_placeholder(self, event):
-        val = self._cookie.get("1.0", "end-1c").strip()
-        if val == "Cole aqui o JSON de cookies ou o texto raw da sessão...":
-            self._cookie.delete("1.0", "end")
-
-    def _add_placeholder(self, event):
-        val = self._cookie.get("1.0", "end-1c").strip()
-        if not val:
-            self._cookie.insert("1.0", "Cole aqui o JSON de cookies ou o texto raw da sessão...")
 
     def _save(self):
         nome = self._nome.get().strip()
         tag  = self._tag.get().strip()
         tipo = TIPOS.get(self._tipo_var.get(), "outro")
-        cookie = self._cookie.get("1.0", "end-1c").strip()
-        if cookie == "Cole aqui o JSON de cookies ou o texto raw da sessão...":
-            cookie = ""
 
         if not nome:
             messagebox.showwarning("Aviso", "Informe o nome.", parent=self)
             return
-        db.atualizar_integracao(self._intg_id, nome, tipo, tag, cookie)
+        tag = _validar_tag(tipo, tag, self)
+        db.atualizar_integracao(self._intg_id, nome, tipo, tag, "")
         self.destroy()
         self._parent.refresh()

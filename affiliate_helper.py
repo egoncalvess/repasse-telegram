@@ -1,142 +1,72 @@
+"""
+Motor de afiliação: troca links de loja pelos SEUS links de afiliado antes do envio.
+
+Regras:
+- Link de terceiros é reconstruído do zero (URL canônica do produto + seus parâmetros),
+  então tags/etiquetas de outros afiliados nunca sobrevivem.
+- Mercado Livre não tem API de links: usamos o formato do "link completo" do Gerador de Links
+  do Portal do Afiliado (matt_word + matt_tool), extraído de um link que você mesmo gerou.
+- Loja sem integração configurada (ou sem conversão oficial possível, ex.: Shopee sem API)
+  fica como "não convertida" para o chamador decidir (bloquear ou repassar como está).
+"""
 import re
 import urllib.request
 import asyncio
-import json
 from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
 import database as db
 
+ML_PARAMS = ("matt_word", "matt_tool")
+
+# loja -> trechos de domínio (inclui encurtadores)
+DOMINIOS = {
+    "amazon": ("amazon.com", "amzn.to", "amzn.com", "a.co/"),
+    "mercadolivre": ("mercadolivre.com", "mercadolibre.com", "meli.la", "meli.to", "mlb.link", "ml.link",
+                     "mpago.la", "mpago.li"),
+    "shopee": ("shopee.", "shope.ee"),
+    "magalu": ("magazinevoce.com.br", "magazineluiza.com.br"),
+    "aliexpress": ("aliexpress.", "s.click.aliexpress"),
+}
+
+
 def get_active_integrations() -> dict:
-    """Retorna as integrações ativas indexadas pelo tipo (ex: 'amazon': {'tag': 'tag', 'cookie': 'cookie'})."""
+    """Integrações ativas indexadas pelo tipo (ex.: 'mercadolivre': {'tag': ...})."""
     try:
-        return {i["tipo"]: {"tag": i.get("tag", ""), "cookie": i.get("cookie", "")} for i in db.listar_integracoes() if i.get("ativo", 1)}
+        return {i["tipo"]: {"tag": i.get("tag", "")} for i in db.listar_integracoes() if i.get("ativo", 1)}
     except Exception:
         return {}
 
-def parse_cookie_data(cookie_data: str):
-    """
-    Parses cookie data which can be a raw cookie string, a JSON list of cookies,
-    or a JSON object containing a user_agent and session_data list.
-    Returns (cookie_header_string, user_agent_string).
-    """
-    cookie_str = ""
-    user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    
-    if not cookie_data:
-        return "", user_agent
-        
-    cookie_data_stripped = cookie_data.strip()
-    if not cookie_data_stripped:
-        return "", user_agent
 
-    # Check if it looks like JSON
-    if (cookie_data_stripped.startswith("[") and cookie_data_stripped.endswith("]")) or \
-       (cookie_data_stripped.startswith("{") and cookie_data_stripped.endswith("}")):
-        try:
-            parsed = json.loads(cookie_data_stripped)
-            if isinstance(parsed, dict):
-                # Format: {"user_agent": "...", "session_data": [...]} or similar
-                if "user_agent" in parsed:
-                    user_agent = parsed["user_agent"]
-                
-                cookie_list = None
-                if "session_data" in parsed and isinstance(parsed["session_data"], list):
-                    cookie_list = parsed["session_data"]
-                elif "cookies" in parsed and isinstance(parsed["cookies"], list):
-                    cookie_list = parsed["cookies"]
-                elif isinstance(parsed, list):
-                    cookie_list = parsed
-                
-                if cookie_list:
-                    cookies = []
-                    for c in cookie_list:
-                        if isinstance(c, dict) and "name" in c and "value" in c:
-                            cookies.append(f"{c['name']}={c['value']}")
-                    cookie_str = "; ".join(cookies)
-            elif isinstance(parsed, list):
-                # Plain list of cookies: [{"name": "...", "value": "..."}, ...]
-                cookies = []
-                for c in parsed:
-                    if isinstance(c, dict) and "name" in c and "value" in c:
-                        cookies.append(f"{c['name']}={c['value']}")
-                cookie_str = "; ".join(cookies)
-        except Exception:
-            pass
+def loja_da_url(url: str) -> str | None:
+    u = url.lower()
+    return next((loja for loja, doms in DOMINIOS.items() if any(d in u for d in doms)), None)
 
-    # If not parsed as JSON successfully (cookie_str still empty), treat as raw Cookie header
-    if not cookie_str:
-        raw_lines = []
-        for line in cookie_data_stripped.split("\n"):
-            line = line.strip()
-            if not line:
-                continue
-            if line.lower().startswith("cookie:"):
-                line = line[len("cookie:"):].strip()
-            # Support Netscape tab-separated format
-            if not line.startswith("#") and "\t" in line:
-                parts = line.split("\t")
-                if len(parts) >= 7:
-                    name = parts[5]
-                    value = parts[6]
-                    raw_lines.append(f"{name}={value}")
-                elif len(parts) >= 2:
-                    raw_lines.append(f"{parts[0]}={parts[1]}")
-            else:
-                raw_lines.append(line)
-        cookie_str = "; ".join(raw_lines)
-        
-    return cookie_str, user_agent
 
-def generate_mercadolivre_affiliate_with_cookie(url: str, cookie_data: str) -> str:
-    """
-    Usa os cookies de sessão fornecidos para gerar o link de afiliado do Mercado Livre
-    fazendo uma requisição HTTP POST para a API de afiliados.
-    """
-    cookie_str, user_agent = parse_cookie_data(cookie_data)
-    if not cookie_str:
-        return url
-        
-    try:
-        api_url = "https://afiliados.mercadolivre.com.br/api/links"
-        payload = json.dumps({"url": url}).encode("utf-8")
-        
-        req = urllib.request.Request(
-            api_url,
-            data=payload,
-            headers={
-                "Content-Type": "application/json",
-                "User-Agent": user_agent,
-                "Cookie": cookie_str,
-                "Accept": "application/json",
-            },
-            method="POST"
-        )
-        
-        with urllib.request.urlopen(req, timeout=8) as response:
-            resp_data = json.loads(response.read().decode("utf-8"))
-            if isinstance(resp_data, dict):
-                if "shortLink" in resp_data:
-                    return resp_data["shortLink"]
-                elif "link" in resp_data:
-                    return resp_data["link"]
-                elif "url" in resp_data:
-                    return resp_data["url"]
-                elif "data" in resp_data and isinstance(resp_data["data"], dict):
-                    data = resp_data["data"]
-                    if "shortLink" in data:
-                        return data["shortLink"]
-                    elif "link" in data:
-                        return data["link"]
-            return url
-    except Exception as e:
-        print(f"[Cookie ML] Erro ao gerar link de afiliado via Cookie: {e}")
-        return url
+def parametros_ml(tag: str) -> dict:
+    """matt_word/matt_tool a partir do link completo do portal (ou da query já normalizada)."""
+    tag = (tag or "").strip()
+    q = parse_qs(urlparse(tag).query if "://" in tag else tag)
+    return {k: q[k][0] for k in ML_PARAMS if q.get(k)}
+
+
+def normalizar_tag(tipo: str, tag: str) -> tuple[str, str | None]:
+    """Como a tag é guardada + aviso para o usuário (None = ok)."""
+    tag = (tag or "").strip()
+    if tipo == "mercadolivre":
+        params = parametros_ml(tag)
+        if set(params) == set(ML_PARAMS):
+            return urlencode(params), None
+        return tag, ("Para o Mercado Livre, cole um LINK COMPLETO gerado no Gerador de Links do Portal do "
+                     "Afiliado (ele contém matt_word e matt_tool). Sem isso, links do ML não serão convertidos.")
+    if tipo == "shopee":
+        return tag, "A Shopee só gera link de afiliado pela API oficial (App ID + Secret); a tag sozinha não converte."
+    return tag, None
 
 
 def resolve_url(url: str) -> str:
     """Resolve o redirecionamento de uma URL encurtada de forma síncrona."""
     try:
         req = urllib.request.Request(
-            url, 
+            url,
             headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
         )
         # Segue redirecionamentos automaticamente
@@ -150,14 +80,17 @@ async def resolve_url_async(url: str) -> str:
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(None, resolve_url, url)
 
+
 def update_amazon_url(url: str, tag: str) -> str:
-    """Insere ou substitui a tag de afiliado da Amazon na URL."""
+    """URL canônica do produto (/dp/ASIN) com a sua tag; sem ASIN, troca só o parâmetro tag."""
+    m = re.search(r"/(?:dp|gp/product|gp/aw/d)/([A-Z0-9]{10})", url, re.IGNORECASE)
+    if m:
+        return f"https://www.amazon.com.br/dp/{m.group(1).upper()}?{urlencode({'tag': tag})}"
     try:
         parsed = urlparse(url)
         query = parse_qs(parsed.query)
         query['tag'] = [tag]
-        new_query = urlencode(query, doseq=True)
-        return urlunparse(parsed._replace(query=new_query))
+        return urlunparse(parsed._replace(query=urlencode(query, doseq=True)))
     except Exception:
         return url
 
@@ -174,116 +107,73 @@ def update_magalu_url(url: str, tag: str) -> str:
         pass
     return url
 
-def update_shopee_url(url: str, tag: str) -> str:
-    """Insere a tag de afiliado do Shopee na URL."""
-    try:
-        parsed = urlparse(url)
-        query = parse_qs(parsed.query)
-        # Define os parâmetros de rastreamento comuns do Shopee
-        query['sub_id'] = [tag]
-        query['utm_content'] = [tag]
-        new_query = urlencode(query, doseq=True)
-        return urlunparse(parsed._replace(query=new_query))
-    except Exception:
-        return url
-
 def update_mercadolivre_url(url: str, tag: str, cookie: str = "") -> str:
-    """Insere ou substitui o parâmetro affiliate do Mercado Livre na URL. Caso haja cookies, usa a API."""
-    if cookie:
-        cookie_link = generate_mercadolivre_affiliate_with_cookie(url, cookie)
-        if cookie_link and cookie_link != url:
-            return cookie_link
-            
-    try:
-        parsed = urlparse(url)
-        query = parse_qs(parsed.query)
-        query['affiliate'] = [tag]
-        new_query = urlencode(query, doseq=True)
-        return urlunparse(parsed._replace(query=new_query))
-    except Exception:
+    """
+    URL canônica do anúncio/produto + seus matt_word/matt_tool (formato do 'link completo' do portal).
+    Retorna a URL original quando não dá para converter (sem link completo configurado ou sem ID MLB).
+    """
+    params = parametros_ml(tag)
+    if set(params) != set(ML_PARAMS):
         return url
+    catalogo = re.search(r"/p/(MLB\d+)", url, re.IGNORECASE)
+    if catalogo:
+        base = f"https://www.mercadolivre.com.br/p/{catalogo.group(1).upper()}"
+    else:
+        item = re.search(r"MLB-?(\d{6,})", url, re.IGNORECASE)
+        if not item:
+            return url
+        base = f"https://produto.mercadolivre.com.br/MLB-{item.group(1)}"
+    return f"{base}?{urlencode(params)}"
+
+
+def converter_url(loja: str, url: str, integracao: dict | None) -> str | None:
+    """Link de afiliado da URL (já resolvida) ou None se não for possível converter."""
+    tag = (integracao or {}).get("tag", "")
+    if not tag:
+        return None
+    if loja == "mercadolivre":
+        novo = update_mercadolivre_url(url, tag)
+    elif loja == "amazon":
+        novo = update_amazon_url(url, tag)
+    elif loja == "magalu":
+        novo = update_magalu_url(url, tag)
+        if novo == url and f"/{tag.lower()}/" in url.lower():  # já é a sua loja
+            return url
+    else:  # shopee/aliexpress: só via API oficial, ainda não integrada
+        return None
+    return novo if novo != url else None
+
+
+async def converter_links(text: str) -> tuple[str, list[str]]:
+    """
+    Troca todos os links de loja do texto pelos seus links de afiliado.
+    Retorna (texto, links_nao_convertidos).
+    """
+    from dedup import URL_RE, _desembrulhar
+    if not text:
+        return text, []
+    integracoes = get_active_integrations()
+    nao_convertidos = []
+    for url in dict.fromkeys(URL_RE.findall(text)):
+        limpa = url.rstrip('.,;!?')
+        loja = loja_da_url(limpa)
+        if not loja:
+            continue
+        # Encurtadores/redirects (inclusive os /sec/ de outros afiliados): resolve até o produto
+        resolvida = limpa
+        if not re.search(r"MLB-?\d{6,}|/dp/[A-Z0-9]{10}|magazinevoce", limpa, re.IGNORECASE):
+            resolvida = _desembrulhar(await resolve_url_async(limpa))
+        novo = converter_url(loja, resolvida, integracoes.get(loja))
+        if novo:
+            text = text.replace(limpa, novo)
+        else:
+            nao_convertidos.append(limpa)
+    return text, nao_convertidos
+
 
 async def process_text_urls(text: str) -> str:
-    """
-    Analisa um texto procurando por links de plataformas parceiras.
-    Se encontrar e a integração correspondente estiver ativa, atualiza com a tag do afiliado.
-    """
-    if not text:
-        return text
-
-    # Regex simples para capturar URLs
-    url_pattern = r'(https?://[^\s]+)'
-    urls = re.findall(url_pattern, text)
-    if not urls:
-        return text
-
-    integrations = get_active_integrations()
-    if not integrations:
-        return text
-
-    for url in urls:
-        # Remove pontuações comuns do final da URL capturada pelo regex
-        clean_url = url.rstrip('.,;()[]{}!?"\'')
-        resolved_url = clean_url
-
-        # Detectar plataforma — cobertura ampla de domínios e encurtadores
-        platform = None
-        url_lower = clean_url.lower()
-        if any(d in url_lower for d in ["amazon.com", "amzn.to", "amzn.com", "a.co"]):
-            platform = "amazon"
-        elif "magazinevoce" in url_lower:
-            platform = "magalu"
-        elif any(d in url_lower for d in [
-            "shopee.com.br", "shopee.co", "shopee.sg", "shopee.ph",
-            "shope.ee", "s.shopee.com.br", "shopee.tw",
-            "shopee.com.my", "shopee.vn", "shopee.co.id",
-            "shopee.co.th",
-        ]):
-            platform = "shopee"
-        elif any(d in url_lower for d in [
-            "mercadolivre.com.br", "produto.mercadolivre",
-            "lista.mercadolivre", "mercadolibre.com",
-            "mlb.link", "ml.link", "mpago.la", "mpago.li",
-            "mercadolivre.com", "mercadopago.com.br",
-            "meli.to",
-        ]):
-            platform = "mercadolivre"
-
-        if not platform or platform not in integrations:
-            continue
-
-        # Se for link encurtador, resolve antes
-        is_short = any(domain in url_lower for domain in [
-            "amzn.to", "amzn.com", "a.co",
-            "shope.ee", "s.shopee.com.br",
-            "mlb.link", "ml.link", "mpago.la", "mpago.li", "meli.to",
-        ])
-
-        if is_short:
-            resolved_url = await resolve_url_async(clean_url)
-
-        # Atualiza a URL com a tag
-        integration = integrations[platform]
-        if isinstance(integration, dict):
-            tag = integration.get("tag", "")
-            cookie = integration.get("cookie", "")
-        else:
-            tag = integration
-            cookie = ""
-        new_url = resolved_url
-        if platform == "amazon":
-            new_url = update_amazon_url(resolved_url, tag)
-        elif platform == "magalu":
-            new_url = update_magalu_url(resolved_url, tag)
-        elif platform == "shopee":
-            new_url = update_shopee_url(resolved_url, tag)
-        elif platform == "mercadolivre":
-            new_url = update_mercadolivre_url(resolved_url, tag, cookie)
-
-        # Substitui a URL original no texto pela URL atualizada
-        text = text.replace(clean_url, new_url)
-
-    return text
+    """Compatibilidade: só o texto convertido."""
+    return (await converter_links(text))[0]
 
 
 def scrape_product_details(url: str, tag: str, cookie: str = "") -> dict:
@@ -352,27 +242,9 @@ def scrape_product_details(url: str, tag: str, cookie: str = "") -> dict:
         if price_match:
             price = price_match.group(0)
             
-    # 6. Gera Link de Afiliado
-    # Detecta a plataforma
-    platform = None
-    if "amazon" in resolved_url or "amzn.to" in resolved_url:
-        platform = "amazon"
-    elif "magazinevoce" in resolved_url:
-        platform = "magalu"
-    elif "shopee" in resolved_url or "shope.ee" in resolved_url:
-        platform = "shopee"
-    elif "mercadolivre" in resolved_url or "mlb.link" in resolved_url or "mpago.la" in resolved_url or "mpago.li" in resolved_url:
-        platform = "mercadolivre"
-        
-    affiliate_url = resolved_url
-    if platform == "amazon":
-        affiliate_url = update_amazon_url(resolved_url, tag)
-    elif platform == "magalu":
-        affiliate_url = update_magalu_url(resolved_url, tag)
-    elif platform == "shopee":
-        affiliate_url = update_shopee_url(resolved_url, tag)
-    elif platform == "mercadolivre":
-        affiliate_url = update_mercadolivre_url(resolved_url, tag, cookie)
+    # 6. Gera Link de Afiliado (mesma regra do repasse; sem conversão possível, mantém a URL)
+    loja = loja_da_url(resolved_url)
+    affiliate_url = (converter_url(loja, resolved_url, {"tag": tag}) if loja else None) or resolved_url
 
     # 7. Baixa a Imagem localmente se houver url
     local_image_path = None

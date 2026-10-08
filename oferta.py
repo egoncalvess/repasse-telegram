@@ -48,8 +48,11 @@ def publicar_oferta(chave: str, conta_id, destino: str, timeout: int = 60):
     p = itens[0]
 
     async def _publicar():
-        from affiliate_helper import process_text_urls
-        url = (await process_text_urls(p["url"])).strip()  # aplica sua tag de afiliado, se configurada
+        from affiliate_helper import converter_links
+        url, nao_convertidos = await converter_links(p["url"])
+        if nao_convertidos:
+            raise RuntimeError(f"Link de {p['loja']} sem conversão para afiliado: configure em Integrações.")
+        url = url.strip()
         foto = p["imagem"] if p.get("imagem") and os.path.exists(p["imagem"]) else None
         await telegram_manager.enviar(conta_id, destino, formatar_oferta(p, url), file=foto, botao_url=url, html=True)
 
