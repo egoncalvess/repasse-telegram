@@ -1,0 +1,15 @@
+# Dados locais: banco contém api_hash e sessões Telethon (acesso total à conta)
+data/
+*.db
+*.session
+
+# Ambiente e artefatos de build
+.venv/
+venv/
+__pycache__/
+*.pyc
+build/
+dist/
+
+# Cópia antiga do repositório aninhado
+repasse-telegram/
