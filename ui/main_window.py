@@ -50,6 +50,7 @@ class MainWindow(ctk.CTk):
             ("disparador",    "🚀   Disparador"),
             ("radar",         "📉   Radar de Preços"),
             ("integracoes",   "🔗   Integrações"),
+            ("banco",         "🗄️   Banco de Dados"),
             ("configuracoes", "⚙️   Configurações"),
         ]
         nav_wrap = ctk.CTkFrame(sb, fg_color="transparent")
@@ -82,6 +83,7 @@ class MainWindow(ctk.CTk):
         from ui.integracoes_frame import IntegracoesFrame
         from ui.configuracoes_frame import ConfiguracoesFrame
         from ui.radar_frame import RadarFrame
+        from ui.banco_frame import BancoFrame
 
         self._frames = {
             "contas":        ContasFrame(self._content),
@@ -89,6 +91,7 @@ class MainWindow(ctk.CTk):
             "disparador":    DisparadorFrame(self._content),
             "radar":         RadarFrame(self._content),
             "integracoes":   IntegracoesFrame(self._content),
+            "banco":         BancoFrame(self._content),
             "configuracoes": ConfiguracoesFrame(self._content),
         }
 
