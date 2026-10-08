@@ -301,7 +301,10 @@ class NicheScheduler:
             self.last_status = "Erro: Conta inválida"
             return False
 
-        produtos = db.listar_produtos_nicho(order_by="desconto", limit=10)
+        # Só publica o que foi coletado hoje: evita repostar preço velho (ou dado antigo do fallback removido)
+        hoje = datetime.now().strftime("%Y-%m-%d")
+        produtos = [p for p in db.listar_produtos_nicho(order_by="desconto", limit=100)
+                    if p["ultima_atualizacao"] == hoje][:10]
         if not produtos:
             self._log("⚠️ Nenhum produto encontrado para postagem.")
             self.last_status = "Concluído (Nenhuma oferta)"
