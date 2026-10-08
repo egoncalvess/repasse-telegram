@@ -111,6 +111,9 @@ class TelegramManager:
                 raise RuntimeError("Conta remetente offline e bot não configurado.")
             buttons = None  # contas de usuário não enviam botões
         entity = await self.resolve_entity(client, destino)
+        if isinstance(entity, (str, int)):  # resolve_entity devolve o próprio identificador quando falha
+            quem = f"@{(await client.get_me()).username}" if client is self.bot else "a conta"
+            raise RuntimeError(f"{quem} não tem acesso ao destino {destino}: adicione como administrador do grupo/canal.")
         return await client.send_message(entity, texto, file=file, buttons=buttons,
                                          parse_mode="html" if html else ())
 
@@ -222,7 +225,7 @@ class TelegramManager:
         phone_number = ident_str
         if ident_str.startswith("+"):
             is_phone = True
-        elif ident_str.isdigit() and len(ident_str) >= 10:
+        elif ident_str.isdigit() and len(ident_str) >= 12:  # IDs de grupo/canal têm até ~11 dígitos; telefone c/ DDI 12+
             is_phone = True
             phone_number = "+" + ident_str
 
@@ -326,11 +329,9 @@ class TelegramManager:
             # Horário (aceita janela que cruza a meia-noite, ex.: 22:00–06:00)
             h_ini = current["horario_inicio"] or "00:00"
             h_fim = current["horario_fim"] or "00:00"
-            if h_ini != "00:00" or h_fim != "00:00":
-                now_t = datetime.now().strftime("%H:%M")
-                dentro = h_ini <= now_t <= h_fim if h_ini <= h_fim else (now_t >= h_ini or now_t <= h_fim)
-                if not dentro:
-                    return
+            import autonomia
+            if not autonomia.dentro_do_horario(h_ini, h_fim):
+                return
 
             text = event.message.text or ""
 
@@ -411,6 +412,8 @@ class TelegramManager:
                     enviado = True
                 except Exception as exc:
                     db.adicionar_historico(repasse_id, dest["grupo_nome"], "Falha", str(exc))
+                    await autonomia.alertar(self, f"repasse{repasse_id}-{dest['grupo_id']}",
+                                            f"Repasse '{current['descricao']}' falhou para {dest['grupo_nome']}: {exc}")
             if enviado:
                 cnt["count"] += 1
                 if chaves:

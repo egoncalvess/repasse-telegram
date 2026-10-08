@@ -34,11 +34,13 @@ def main():
 
 
 def _start_engine():
-    """Sobe o motor: bot (publicação + painel) e contas (que restauram seus repasses e o radar)."""
+    """Sobe o motor: bot (publicação + painel), contas (repasses + radar) e rotinas autônomas."""
+    from telegram_manager import telegram_manager
+    import autonomia
     if db.get_config("bot_token"):
-        from telegram_manager import telegram_manager
         telegram_manager.iniciar_bot()
     _auto_reconnect()
+    telegram_manager._run(autonomia.iniciar(telegram_manager))
 
 
 def _run_headless():

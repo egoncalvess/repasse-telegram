@@ -17,6 +17,10 @@ def _admin_id():
     return int(v) if v.isdigit() else None
 
 
+def _piloto() -> bool:
+    return db.get_config("piloto_ativo", "0") == "1"
+
+
 def _pausado() -> bool:
     return db.get_config("pausado", "0") == "1"
 
@@ -32,6 +36,7 @@ def _tela_status(tm):
         f"🔁 Repasses ativos: {ativos}/{len(repasses)}\n"
         f"📨 Envios hoje: {db.contar_envios_hoje()}\n"
         f"📉 Radar: {radar['produtos']} produtos · {radar['precos_hoje']} preços hoje\n"
+        f"🤖 Piloto: {'ligado' if _piloto() else 'desligado'} · {db.get_config('piloto_status') or '-'}\n"
         f"🕒 {datetime.now().strftime('%d/%m %H:%M:%S')}"
     )
     botoes = [
@@ -39,6 +44,7 @@ def _tela_status(tm):
          Button.inline("🔄 Atualizar", b"p:status")],
         [Button.inline("🔁 Repasses", b"p:repasses"),
          Button.inline("📉 Menores preços hoje", b"p:radar")],
+        [Button.inline("🤖 Desligar piloto" if _piloto() else "🤖 Ligar piloto", b"p:piloto")],
     ]
     return texto, botoes
 
@@ -86,6 +92,8 @@ def registrar(bot, tm):
         tela = _tela_status
         if acao == "pausa":
             db.set_config("pausado", "0" if _pausado() else "1")
+        elif acao == "piloto":
+            db.set_config("piloto_ativo", "0" if _piloto() else "1")
         elif acao in ("repasses", "radar"):
             tela = _tela_repasses if acao == "repasses" else _tela_radar
         elif acao.startswith("tog:"):

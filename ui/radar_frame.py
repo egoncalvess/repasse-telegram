@@ -46,6 +46,27 @@ class RadarFrame(ctk.CTkFrame):
         ctk.CTkLabel(dest, text="Os preços vêm das ofertas dos canais de origem dos seus repasses.",
                      font=("Arial", 11), text_color=("#64748b", "#94a3b8")).pack(side="left", padx=12)
 
+        # Piloto automático: publica sozinho as ofertas com queda real de preço
+        pil = ctk.CTkFrame(self, fg_color=("white", "#1e1e1e"), corner_radius=12)
+        pil.pack(fill="x", padx=16, pady=(0, 8))
+        self._piloto = ctk.BooleanVar(value=db.get_config("piloto_ativo", "0") == "1")
+        ctk.CTkSwitch(pil, text="🤖 Piloto automático", variable=self._piloto,
+                      font=("Arial", 12, "bold")).pack(side="left", padx=(16, 12), pady=10)
+        self._pil_campos = {}
+        for chave, rotulo, padrao, w in [("piloto_intervalo_min", "a cada (min)", "30", 50),
+                                         ("piloto_max_dia", "máx/dia", "10", 45),
+                                         ("piloto_inicio", "das", "08:00", 60),
+                                         ("piloto_fim", "às", "22:00", 60)]:
+            ctk.CTkLabel(pil, text=rotulo).pack(side="left", padx=(6, 2))
+            e = ctk.CTkEntry(pil, width=w)
+            e.insert(0, db.get_config(chave) or padrao)
+            e.pack(side="left")
+            self._pil_campos[chave] = e
+        ctk.CTkButton(pil, text="Salvar", width=80, command=self._salvar_piloto,
+                      fg_color=BTN_BLUE[0], hover_color=BTN_BLUE[1]).pack(side="left", padx=10)
+        self._pil_status = ctk.CTkLabel(pil, text="", font=("Arial", 11), text_color=("#64748b", "#94a3b8"))
+        self._pil_status.pack(side="left", padx=4)
+
         card = ctk.CTkFrame(self, fg_color=("white", "#1e1e1e"), corner_radius=12)
         card.pack(fill="both", expand=True, padx=16, pady=8)
         ctk.CTkLabel(card, text="📉 Menores preços do dia", font=("Arial", 14, "bold")).pack(anchor="w", padx=12, pady=(10, 0))
@@ -59,6 +80,8 @@ class RadarFrame(ctk.CTkFrame):
     def refresh(self):
         r = db.resumo_radar()
         self._resumo.configure(text=f"{r['produtos']} produtos monitorados · {r['precos_hoje']} preços registrados hoje")
+        self._piloto.set(db.get_config("piloto_ativo", "0") == "1")  # pode ter mudado pelo painel do bot
+        self._pil_status.configure(text="Última rodada: " + (db.get_config("piloto_status") or "—"))
         for w in self._list.winfo_children():
             w.destroy()
 
@@ -100,6 +123,21 @@ class RadarFrame(ctk.CTkFrame):
             self.after(0, _ui)
 
         telegram_manager.importar_historico(dias, concluido, progresso)
+
+    def _salvar_piloto(self):
+        import re
+        v = {k: e.get().strip() for k, e in self._pil_campos.items()}
+        if not (v["piloto_intervalo_min"].isdigit() and int(v["piloto_intervalo_min"]) >= 5
+                and v["piloto_max_dia"].isdigit()
+                and all(re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", v[k]) for k in ("piloto_inicio", "piloto_fim"))):
+            messagebox.showwarning("Aviso", "Intervalo ≥ 5 min, máximo numérico e horários no formato HH:MM.", parent=self)
+            return
+        for k, val in v.items():
+            db.set_config(k, val)
+        db.set_config("piloto_ativo", "1" if self._piloto.get() else "0")
+        if self._piloto.get() and not self._destino.get().strip():
+            messagebox.showwarning("Aviso", "Defina e salve o destino para o piloto publicar.", parent=self)
+        self.refresh()
 
     def _salvar_destino(self):
         db.set_config("radar_destino", self._destino.get().strip())
