@@ -2,7 +2,7 @@ import customtkinter as ctk
 from tkinter import messagebox
 import database as db
 
-BTN_BLUE = ("#1a6fd4", "#1558ab")
+BTN_BLUE = ("#1747a6", "#123a88")
 BTN_RED  = ("#e74c3c", "#c0392b")
 HDR_BG   = ("#e2e8f2", "#1e293b")
 ROW_SEL  = ("#dbeafe", "#1e3a5f")
@@ -42,16 +42,16 @@ def _validar_tag(tipo: str, tag: str, parent) -> str:
 
 class IntegracoesFrame(ctk.CTkFrame):
     def __init__(self, parent):
-        super().__init__(parent, corner_radius=0, fg_color=("#f1f5fb", "#121212"))
+        super().__init__(parent, corner_radius=0, fg_color=("#f4f6fb", "#0f1115"))
         self._selected: int | None = None
         self._rows: dict = {}
         self._build()
 
     def _build(self):
-        hdr = ctk.CTkFrame(self, fg_color=("white", "#1e1e1e"), corner_radius=12)
+        hdr = ctk.CTkFrame(self, fg_color=("#ffffff", "#181b22"), corner_radius=12)
         hdr.pack(fill="x", padx=16, pady=(16, 8))
         ctk.CTkLabel(hdr, text="Integrações de Afiliados",
-                     font=("Arial", 18, "bold")).pack(side="left", padx=16, pady=14)
+                     font=("Segoe UI", 18, "bold")).pack(side="left", padx=16, pady=14)
 
         bar = ctk.CTkFrame(hdr, fg_color="transparent")
         bar.pack(side="right", padx=12, pady=10)
@@ -64,14 +64,14 @@ class IntegracoesFrame(ctk.CTkFrame):
         ctk.CTkButton(bar, text="🧪 Testar link", command=self._testar,
                       fg_color=("#64748b", "#4b5563"), hover_color=("#475569", "#374151"), width=110).pack(side="left", padx=4)
 
-        card = ctk.CTkFrame(self, fg_color=("white", "#1e1e1e"), corner_radius=12)
+        card = ctk.CTkFrame(self, fg_color=("#ffffff", "#181b22"), corner_radius=12)
         card.pack(fill="both", expand=True, padx=16, pady=8)
 
         cols = [("", 40), ("Cód.", 50), ("Nome", 160), ("Tipo", 160), ("Tag/ID Afiliado", 240)]
         hrow = ctk.CTkFrame(card, fg_color=HDR_BG, corner_radius=8)
         hrow.pack(fill="x", padx=8, pady=(8, 0))
         for col, w in cols:
-            ctk.CTkLabel(hrow, text=col, font=("Arial", 12, "bold"),
+            ctk.CTkLabel(hrow, text=col, font=("Segoe UI", 12, "bold"),
                          width=w, anchor="w").pack(side="left", padx=8, pady=8)
 
         self._list = ctk.CTkScrollableFrame(card, fg_color="transparent")
@@ -83,7 +83,7 @@ class IntegracoesFrame(ctk.CTkFrame):
         ctk.CTkLabel(info,
                      text="ℹ️  Links de loja nos repasses (com 'Substituição Inteligente') e no Radar são reconstruídos com a SUA afiliação; "
                           "tags de outros afiliados são descartadas. Use '🧪 Testar link' para conferir antes de publicar.",
-                     font=("Arial", 11), text_color=("#1e40af", "#93c5fd"),
+                     font=("Segoe UI", 11), text_color=("#1e40af", "#93c5fd"),
                      wraplength=700, justify="left").pack(padx=16, pady=10, anchor="w")
 
         self.refresh()
@@ -100,17 +100,17 @@ class IntegracoesFrame(ctk.CTkFrame):
         row.pack(fill="x", pady=1)
 
         emoji = EMOJI.get(intg["tipo"], "⚪")
-        ctk.CTkLabel(row, text=emoji, width=40, font=("Arial", 16)).pack(side="left", padx=6, pady=8)
-        ctk.CTkLabel(row, text=str(intg["id"]),  width=50,  anchor="w", font=("Arial", 12)).pack(side="left")
-        ctk.CTkLabel(row, text=intg["nome"],      width=160, anchor="w", font=("Arial", 12)).pack(side="left")
-        ctk.CTkLabel(row, text=intg["tipo"],      width=160, anchor="w", font=("Arial", 12)).pack(side="left")
+        ctk.CTkLabel(row, text=emoji, width=40, font=("Segoe UI", 16)).pack(side="left", padx=6, pady=8)
+        ctk.CTkLabel(row, text=str(intg["id"]),  width=50,  anchor="w", font=("Segoe UI", 12)).pack(side="left")
+        ctk.CTkLabel(row, text=intg["nome"],      width=160, anchor="w", font=("Segoe UI", 12)).pack(side="left")
+        ctk.CTkLabel(row, text=intg["tipo"],      width=160, anchor="w", font=("Segoe UI", 12)).pack(side="left")
         
         tag_text = intg["tag"] or "-"
         if intg["tipo"] == "mercadolivre":
             from affiliate_helper import parametros_ml
             tag_text = ("✅ " + tag_text) if len(parametros_ml(tag_text)) == 2 else "⚠️ falta link completo do portal"
             
-        ctk.CTkLabel(row, text=tag_text, width=240, anchor="w", font=("Arial", 12),
+        ctk.CTkLabel(row, text=tag_text, width=240, anchor="w", font=("Segoe UI", 12),
                      text_color=("#64748b", "#94a3b8")).pack(side="left")
 
         for w in [row] + list(row.winfo_children()):
@@ -141,15 +141,25 @@ class IntegracoesFrame(ctk.CTkFrame):
                                  title="Testar conversão").get_input()
         if not url:
             return
-        import asyncio
+        from telegram_manager import telegram_manager
         from affiliate_helper import converter_links
-        texto, nao = asyncio.run(converter_links(url.strip()))
-        if nao:
-            messagebox.showwarning("Não convertido",
-                                   f"Este link NÃO vira afiliado seu:\n{nao[0]}\n\n"
-                                   "Confira se a loja tem integração ativa (ML: link completo do portal).")
-        else:
-            messagebox.showinfo("Convertido", f"Original:\n{url.strip()}\n\nSeu link:\n{texto}")
+
+        def _done(fut):  # roda no loop do Telegram: a tela não trava enquanto resolve o link
+            try:
+                texto, nao = fut.result()
+            except Exception as e:
+                texto, nao = "", [f"erro: {e}"]
+
+            def _ui():
+                if nao:
+                    messagebox.showwarning("Não convertido",
+                                           f"Este link NÃO vira afiliado seu:\n{nao[0]}\n\n"
+                                           "Confira se a loja tem integração ativa (ML: link completo do portal).")
+                else:
+                    messagebox.showinfo("Convertido", f"Original:\n{url.strip()}\n\nSeu link:\n{texto}")
+            self.after(0, _ui)
+
+        telegram_manager._run(converter_links(url.strip())).add_done_callback(_done)
 
     def _edit(self):
         if not self._selected:
@@ -176,23 +186,23 @@ class AdicionarIntegracaoDialog(ctk.CTkToplevel):
         self.attributes("-topmost", True)
 
         ctk.CTkLabel(self, text="Nova Integração de Afiliado",
-                     font=("Arial", 16, "bold")).pack(pady=(16, 12))
+                     font=("Segoe UI", 16, "bold")).pack(pady=(16, 12))
 
-        ctk.CTkLabel(self, text="Nome (apelido interno)", font=("Arial", 11, "bold")).pack(anchor="w", padx=40)
+        ctk.CTkLabel(self, text="Nome (apelido interno)", font=("Segoe UI", 11, "bold")).pack(anchor="w", padx=40)
         self._nome = ctk.CTkEntry(self, width=340, placeholder_text="Ex: Minha Conta Mercado Livre")
         self._nome.pack(pady=(2, 10))
 
-        ctk.CTkLabel(self, text="Plataforma", font=("Arial", 11, "bold")).pack(anchor="w", padx=40)
+        ctk.CTkLabel(self, text="Plataforma", font=("Segoe UI", 11, "bold")).pack(anchor="w", padx=40)
         self._tipo_var = ctk.StringVar(value=list(TIPOS.keys())[0])
         self._tipo_menu = ctk.CTkOptionMenu(self, variable=self._tipo_var,
                           values=list(TIPOS.keys()), width=340)
         self._tipo_menu.pack(pady=(2, 10))
 
-        ctk.CTkLabel(self, text="Tag de afiliado (ML: link completo do portal)", font=("Arial", 11, "bold")).pack(anchor="w", padx=40)
+        ctk.CTkLabel(self, text="Tag de afiliado (ML: link completo do portal)", font=("Segoe UI", 11, "bold")).pack(anchor="w", padx=40)
         self._tag = ctk.CTkEntry(self, width=340, placeholder_text="Sua tag de afiliado")
         self._tag.pack(pady=(2, 10))
 
-        ctk.CTkLabel(self, text=AJUDA_TAG, font=("Arial", 11), wraplength=340, justify="left",
+        ctk.CTkLabel(self, text=AJUDA_TAG, font=("Segoe UI", 11), wraplength=340, justify="left",
                      text_color=("#64748b", "#94a3b8")).pack(padx=40, pady=(0, 16), anchor="w")
 
         ctk.CTkButton(self, text="Salvar", command=self._save, width=140, fg_color=BTN_BLUE[0], hover_color=BTN_BLUE[1]).pack(pady=(0, 16))
@@ -224,27 +234,27 @@ class EditarIntegracaoDialog(ctk.CTkToplevel):
         self.attributes("-topmost", True)
 
         ctk.CTkLabel(self, text="Editar Integração de Afiliado",
-                     font=("Arial", 16, "bold")).pack(pady=(16, 12))
+                     font=("Segoe UI", 16, "bold")).pack(pady=(16, 12))
 
-        ctk.CTkLabel(self, text="Nome (apelido interno)", font=("Arial", 11, "bold")).pack(anchor="w", padx=40)
+        ctk.CTkLabel(self, text="Nome (apelido interno)", font=("Segoe UI", 11, "bold")).pack(anchor="w", padx=40)
         self._nome = ctk.CTkEntry(self, width=340)
         self._nome.insert(0, intg["nome"])
         self._nome.pack(pady=(2, 10))
 
         # Descobrir label da plataforma
         tipo_label = next((k for k, v in TIPOS.items() if v == intg["tipo"]), list(TIPOS.keys())[0])
-        ctk.CTkLabel(self, text="Plataforma", font=("Arial", 11, "bold")).pack(anchor="w", padx=40)
+        ctk.CTkLabel(self, text="Plataforma", font=("Segoe UI", 11, "bold")).pack(anchor="w", padx=40)
         self._tipo_var = ctk.StringVar(value=tipo_label)
         self._tipo_menu = ctk.CTkOptionMenu(self, variable=self._tipo_var,
                           values=list(TIPOS.keys()), width=340)
         self._tipo_menu.pack(pady=(2, 10))
 
-        ctk.CTkLabel(self, text="Tag de afiliado (ML: link completo do portal)", font=("Arial", 11, "bold")).pack(anchor="w", padx=40)
+        ctk.CTkLabel(self, text="Tag de afiliado (ML: link completo do portal)", font=("Segoe UI", 11, "bold")).pack(anchor="w", padx=40)
         self._tag = ctk.CTkEntry(self, width=340)
         self._tag.insert(0, intg.get("tag", ""))
         self._tag.pack(pady=(2, 10))
 
-        ctk.CTkLabel(self, text=AJUDA_TAG, font=("Arial", 11), wraplength=340, justify="left",
+        ctk.CTkLabel(self, text=AJUDA_TAG, font=("Segoe UI", 11), wraplength=340, justify="left",
                      text_color=("#64748b", "#94a3b8")).pack(padx=40, pady=(0, 16), anchor="w")
 
         ctk.CTkButton(self, text="💾 Salvar Alterações", command=self._save, width=160,

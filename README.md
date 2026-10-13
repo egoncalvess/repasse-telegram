@@ -9,8 +9,8 @@ Ferramenta desktop para automatizar o repasse de mensagens entre grupos e canais
 - **Filtros de mídia** — Bloqueie links, imagens, vídeos, áudios
 - **Filtros por palavras** — Permita ou bloqueie mensagens por termos
 - **Substituições de texto** — Troque links, textos, tags de afiliado
-- **Delay configurável** — Delay entre repasses para evitar ban
-- **Limite diário** — Limite de repasses por dia
+- **Intervalo entre envios** — Espaça os envios de cada repasse (e respeita o FloodWait do Telegram) para evitar ban
+- **Limite diário** — Limite de repasses por dia (contado no banco, vale mesmo após reiniciar o app)
 - **Horário de funcionamento** — Defina o intervalo de horas
 - **Integrações de afiliados** — Amazon, Mercado Livre, Shopee, AliExpress, Magalu
 - **Relatórios** — Histórico de todos os repasses com status
@@ -36,7 +36,7 @@ repasse_telegram.exe --headless      # ou: python main.py --headless
 
 Roda só o motor (repasses + agendador de nichos), sem janela. As contas precisam ter sido
 conectadas antes pela GUI (a sessão fica salva em `data/repasse.db`). Sem console, o log vai
-para `data/headless.log`.
+para `data/app.log`.
 
 ## Instalação (desenvolvimento)
 

@@ -1,5 +1,8 @@
+import os
 import sys
 import threading
+from pathlib import Path
+
 import database as db
 
 # Garantir codificação UTF-8 para stdout e stderr no Windows
@@ -10,9 +13,33 @@ if sys.platform.startswith("win"):
     except AttributeError:
         pass
 
+def _pasta_do_app() -> Path:
+    """Pasta do .exe (ou do main.py): data/ fica sempre ao lado do app, qualquer que seja a pasta de início do atalho."""
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parent
+
+
 def main():
+    os.chdir(_pasta_do_app())  # caminhos relativos (data/repasse.db, data/imagens, backups, log) partem daqui
+
     # Inicializar banco
     db.init_db()
+
+    if sys.stdout is None:  # pythonw / exe sem console: log em arquivo
+        log = open("data/app.log", "a", encoding="utf-8", buffering=1)
+        sys.stdout = sys.stderr = log
+
+    import inicializacao
+    if not inicializacao.garantir_instancia_unica():
+        print("[App] Já existe uma instância aberta; encerrando esta.")
+        if "--headless" not in sys.argv:
+            import tkinter as tk
+            from tkinter import messagebox
+            raiz = tk.Tk()
+            raiz.withdraw()
+            messagebox.showinfo("Repasse Telegram", "O app já está aberto (veja a barra de tarefas/bandeja).")
+        return
 
     if "--headless" in sys.argv:
         _run_headless()
@@ -29,24 +56,25 @@ def main():
     from ui.main_window import MainWindow
     app = MainWindow()
 
+    if "--minimizado" in sys.argv or db.get_config("start_minimized", "0") == "1":
+        app.iconify()
+
     _start_engine()
     app.mainloop()
 
 
 def _start_engine():
-    """Sobe o motor: bot (publicação + painel) e contas (que restauram seus repasses e o radar)."""
+    """Sobe o motor: bot (publicação + painel), contas (repasses + radar) e rotinas autônomas."""
+    from telegram_manager import telegram_manager
+    import autonomia
     if db.get_config("bot_token"):
-        from telegram_manager import telegram_manager
         telegram_manager.iniciar_bot()
     _auto_reconnect()
+    telegram_manager._run(autonomia.iniciar(telegram_manager))
 
 
 def _run_headless():
     """Roda só o motor, sem interface (servidor/24h). Contas precisam ter sessão salva pela GUI."""
-    if sys.stdout is None:  # exe --windowed não tem console: loga em arquivo
-        log = open("data/headless.log", "a", encoding="utf-8", buffering=1)
-        sys.stdout = sys.stderr = log
-
     _start_engine()
     print("[Headless] Motor ativo. Ctrl+C para encerrar.")
     try:

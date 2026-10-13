@@ -36,7 +36,7 @@ def formatar_oferta(p: dict, url: str) -> str:
     return "\n".join(linhas)
 
 
-def publicar_oferta(chave: str, conta_id, destino: str, timeout: int = 60):
+def publicar_oferta(chave: str, conta_id, destino: str, timeout: int = 60, origem: str = "manual"):
     """Publica o produto do radar (bot se ativo, senão conta). Bloqueante: chamar fora do loop asyncio."""
     from telegram_manager import telegram_manager
 
@@ -61,5 +61,5 @@ def publicar_oferta(chave: str, conta_id, destino: str, timeout: int = 60):
     except Exception as e:
         db.registrar_publicacao(chave, destino, "falha", str(e))
         raise
-    db.registrar_publicacao(chave, destino, "enviado")
+    db.registrar_publicacao(chave, destino, "enviado", origem)
     db.marcar_ofertas({chave})

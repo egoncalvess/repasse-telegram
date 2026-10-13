@@ -57,7 +57,7 @@ def extrair_nome(texto: str) -> str:
     return "Produto sem título"
 
 
-async def capturar(msg, texto: str, origem: str) -> int:
+async def capturar(msg, texto: str, origem: str, visto_em=None) -> int:
     """Registra o preço da oferta da mensagem. Retorna quantos produtos foram registrados (0 ou 1)."""
     import dedup
 
@@ -79,6 +79,32 @@ async def capturar(msg, texto: str, origem: str) -> int:
         except Exception as e:
             print(f"[Radar] Falha ao salvar imagem de {chave}: {e}")
 
-    db.registrar_preco(chave, extrair_nome(texto), LOJAS.get(chave.split(":")[0], "Loja"), url, preco,
-                       origem=origem, imagem=imagem)
+    nome = extrair_nome(texto)
+    db.registrar_preco(chave, nome, LOJAS.get(chave.split(":")[0], "Loja"), url, preco,
+                       origem=origem, imagem=imagem, visto_em=visto_em)
+    if visto_em is None:
+        print(f"[Radar] {origem[:25]}: {nome[:40]} = R$ {preco:.2f}")
     return 1
+
+
+async def importar_historico(client, entity, origem: str, dias: int = 30, progresso=None) -> tuple[int, int]:
+    """
+    Lê as postagens antigas do canal (conta de usuário) e registra os preços com a data original.
+    Retorna (mensagens lidas, preços registrados). Mensagens repetidas não duplicam (mesmo minuto).
+    """
+    from datetime import datetime, timedelta, timezone
+    limite = datetime.now(timezone.utc) - timedelta(days=dias)
+    lidas = registrados = 0
+    async for msg in client.iter_messages(entity):
+        if msg.date < limite:
+            break
+        lidas += 1
+        if msg.text:
+            try:
+                registrados += await capturar(msg, msg.text, origem,
+                                              visto_em=msg.date.astimezone().replace(tzinfo=None))
+            except Exception as e:
+                print(f"[Radar] Falha ao importar msg {msg.id} de {origem}: {e}")
+        if progresso and lidas % 25 == 0:
+            progresso(lidas, registrados)
+    return lidas, registrados

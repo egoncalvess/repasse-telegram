@@ -96,9 +96,32 @@ def init_db():
         );
         CREATE INDEX IF NOT EXISTS idx_precos_visto ON precos(visto_em);
 
+        -- Várias origens por repasse (antes era uma só, em repasses.origem_id)
+        CREATE TABLE IF NOT EXISTS repasse_origens (
+            repasse_id  INTEGER NOT NULL,
+            origem_id   TEXT    NOT NULL,     -- ID marcado (-100… canal/supergrupo, -… grupo)
+            origem_nome TEXT,
+            PRIMARY KEY (repasse_id, origem_id)
+        );
+
+        -- Canais monitorados só para o Radar de Preços (não repassam nada)
+        CREATE TABLE IF NOT EXISTS fontes (
+            chat_id  TEXT PRIMARY KEY,
+            nome     TEXT,
+            conta_id INTEGER
+        );
+
         CREATE TABLE IF NOT EXISTS ofertas_vistas (
             chave    TEXT PRIMARY KEY,
             visto_em TEXT NOT NULL
+        );
+
+        -- Mensagens enviadas por repasse em cada dia (limite diário sobrevive a reinícios do app)
+        CREATE TABLE IF NOT EXISTS repasse_envios_dia (
+            repasse_id INTEGER NOT NULL,
+            dia        TEXT    NOT NULL,      -- YYYY-MM-DD (hora local)
+            enviadas   INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (repasse_id, dia)
         );
 
         CREATE TABLE IF NOT EXISTS publicacoes (
@@ -117,6 +140,14 @@ def init_db():
         conn.commit()
     except sqlite3.OperationalError:
         pass
+    # Migração: origem única antiga -> tabela repasse_origens
+    conn.execute("""
+        INSERT OR IGNORE INTO repasse_origens (repasse_id, origem_id, origem_nome)
+        SELECT id, origem_id, origem_nome FROM repasses
+        WHERE origem_id IS NOT NULL AND origem_id != ''
+          AND id NOT IN (SELECT repasse_id FROM repasse_origens)
+    """)
+    conn.commit()
     # Migração automática de banco para adicionar coluna 'cookie' caso não exista
     try:
         conn.execute("ALTER TABLE integracoes ADD COLUMN cookie TEXT DEFAULT ''")
@@ -218,6 +249,8 @@ def toggle_repasse(repasse_id: int, ativo: int):
 def remover_repasse(repasse_id: int):
     conn = get_conn()
     conn.execute("DELETE FROM destinos WHERE repasse_id=?", (repasse_id,))
+    conn.execute("DELETE FROM repasse_origens WHERE repasse_id=?", (repasse_id,))
+    conn.execute("DELETE FROM repasse_envios_dia WHERE repasse_id=?", (repasse_id,))
     conn.execute("DELETE FROM repasses WHERE id=?", (repasse_id,))
     conn.commit()
     conn.close()
@@ -226,6 +259,26 @@ def remover_repasse(repasse_id: int):
 def incrementar_repasse(repasse_id: int):
     conn = get_conn()
     conn.execute("UPDATE repasses SET total=total+1 WHERE id=?", (repasse_id,))
+    conn.commit()
+    conn.close()
+
+
+def enviadas_hoje(repasse_id: int) -> int:
+    """Mensagens que o repasse já enviou hoje (base do limite diário)."""
+    conn = get_conn()
+    row = conn.execute("SELECT enviadas FROM repasse_envios_dia WHERE repasse_id=? AND dia=date('now', 'localtime')",
+                       (repasse_id,)).fetchone()
+    conn.close()
+    return row["enviadas"] if row else 0
+
+
+def registrar_envio_dia(repasse_id: int):
+    conn = get_conn()
+    conn.execute("""
+        INSERT INTO repasse_envios_dia (repasse_id, dia, enviadas) VALUES (?, date('now', 'localtime'), 1)
+        ON CONFLICT(repasse_id, dia) DO UPDATE SET enviadas = enviadas + 1
+    """, (repasse_id,))
+    conn.execute("DELETE FROM repasse_envios_dia WHERE dia < date('now', 'localtime', '-30 days')")
     conn.commit()
     conn.close()
 
@@ -249,6 +302,62 @@ def set_destinos(repasse_id: int, destinos: list):
         )
     conn.commit()
     conn.close()
+
+
+# ── Origens (várias por repasse) e fontes do radar ───────────────────────────
+
+def listar_origens(repasse_id: int):
+    conn = get_conn()
+    rows = conn.execute("SELECT origem_id, origem_nome FROM repasse_origens WHERE repasse_id=?",
+                        (repasse_id,)).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def set_origens(repasse_id: int, origens: list):
+    """origens: [{'origem_id', 'origem_nome'}]. Mantém repasses.origem_* como resumo para telas antigas."""
+    conn = get_conn()
+    conn.execute("DELETE FROM repasse_origens WHERE repasse_id=?", (repasse_id,))
+    conn.executemany("INSERT OR IGNORE INTO repasse_origens (repasse_id, origem_id, origem_nome) VALUES (?,?,?)",
+                     [(repasse_id, o["origem_id"], o["origem_nome"]) for o in origens])
+    resumo = origens[0]["origem_nome"] if len(origens) == 1 else f"{len(origens)} grupos"
+    conn.execute("UPDATE repasses SET origem_id=?, origem_nome=? WHERE id=?",
+                 (origens[0]["origem_id"] if origens else "", resumo if origens else "", repasse_id))
+    conn.commit()
+    conn.close()
+
+
+def listar_fontes():
+    conn = get_conn()
+    rows = conn.execute("SELECT * FROM fontes ORDER BY nome").fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def set_fontes(conta_id: int, fontes: list):
+    """fontes: [{'chat_id', 'nome'}] monitoradas pela conta (substitui a lista dessa conta)."""
+    conn = get_conn()
+    conn.execute("DELETE FROM fontes WHERE conta_id=?", (conta_id,))
+    conn.executemany("INSERT OR REPLACE INTO fontes (chat_id, nome, conta_id) VALUES (?,?,?)",
+                     [(f["chat_id"], f["nome"], conta_id) for f in fontes])
+    conn.commit()
+    conn.close()
+
+
+def chats_do_radar(conta_id: int) -> dict:
+    """{chat_id: nome} que a conta observa para o radar: fontes + origens dos repasses ativos."""
+    conn = get_conn()
+    rows = conn.execute("""
+        SELECT chat_id, nome FROM fontes WHERE conta_id = ?
+        UNION
+        SELECT o.origem_id, o.origem_nome FROM repasse_origens o
+        JOIN repasses r ON r.id = o.repasse_id WHERE r.conta_id = ? AND r.ativo = 1
+    """, (conta_id, conta_id)).fetchall()
+    conn.close()
+    chats = {r[0]: r[1] for r in rows}
+    # ID antigo sem prefixo e o mesmo chat com prefixo (-100…/-…): fica só a forma marcada
+    return {cid: nome for cid, nome in chats.items()
+            if not (cid.isdigit() and (f"-100{cid}" in chats or f"-{cid}" in chats))}
 
 
 # ── Integrações ───────────────────────────────────────────────────────────────
@@ -337,16 +446,22 @@ def set_config(chave: str, valor: str):
 
 # ── Radar de preços ───────────────────────────────────────────────────────────
 
-def registrar_preco(chave: str, nome: str, loja: str, url: str, preco: float, origem: str = "", imagem: str = None):
-    """Upsert do produto + uma observação de preço (mesmo minuto não duplica)."""
-    agora = datetime.now().strftime("%Y-%m-%d %H:%M")
+def registrar_preco(chave: str, nome: str, loja: str, url: str, preco: float, origem: str = "", imagem: str = None,
+                    visto_em: datetime = None):
+    """Upsert do produto + uma observação de preço (mesmo minuto não duplica).
+    visto_em: data original da postagem (importação de histórico); padrão = agora."""
+    agora = (visto_em or datetime.now()).strftime("%Y-%m-%d %H:%M")
     conn = get_conn()
+    # Importação pode chegar fora de ordem: nome/url só são trocados por uma observação mais recente
     conn.execute("""
         INSERT INTO produtos (chave, nome, loja, url, imagem, criado_em, atualizado_em)
         VALUES (?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(chave) DO UPDATE SET
-            nome = excluded.nome, url = excluded.url, atualizado_em = excluded.atualizado_em,
-            imagem = COALESCE(excluded.imagem, produtos.imagem)
+            nome = CASE WHEN excluded.atualizado_em >= produtos.atualizado_em THEN excluded.nome ELSE produtos.nome END,
+            url  = CASE WHEN excluded.atualizado_em >= produtos.atualizado_em THEN excluded.url ELSE produtos.url END,
+            atualizado_em = MAX(produtos.atualizado_em, excluded.atualizado_em),
+            criado_em = MIN(produtos.criado_em, excluded.criado_em),
+            imagem = COALESCE(produtos.imagem, excluded.imagem)
     """, (chave, nome, loja, url, imagem, agora, agora))
     conn.execute("INSERT OR IGNORE INTO precos (chave, preco, visto_em, origem) VALUES (?, ?, ?, ?)",
                  (chave, preco, agora, origem))

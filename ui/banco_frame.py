@@ -30,13 +30,13 @@ def _mascarar(tabela: str, colunas: list[str], linha: tuple) -> list:
 
 class BancoFrame(ctk.CTkFrame):
     def __init__(self, parent):
-        super().__init__(parent, corner_radius=0, fg_color=("#f1f5fb", "#121212"))
+        super().__init__(parent, corner_radius=0, fg_color=("#f4f6fb", "#0f1115"))
         self._build()
 
     def _build(self):
-        hdr = ctk.CTkFrame(self, fg_color=("white", "#1e1e1e"), corner_radius=12)
+        hdr = ctk.CTkFrame(self, fg_color=("#ffffff", "#181b22"), corner_radius=12)
         hdr.pack(fill="x", padx=16, pady=(16, 8))
-        ctk.CTkLabel(hdr, text="Banco de Dados", font=("Arial", 18, "bold")).pack(side="left", padx=16, pady=14)
+        ctk.CTkLabel(hdr, text="Banco de Dados", font=("Segoe UI", 18, "bold")).pack(side="left", padx=16, pady=14)
         self._tabela = ctk.StringVar()
         self._menu = ctk.CTkOptionMenu(hdr, variable=self._tabela, values=[""], width=220,
                                        command=lambda _: self._carregar())
@@ -46,10 +46,10 @@ class BancoFrame(ctk.CTkFrame):
         self._busca.bind("<Return>", lambda _: self._carregar())
         ctk.CTkButton(hdr, text="↻ Atualizar", width=110, command=self.refresh,
                       fg_color=BTN_GRAY[0], hover_color=BTN_GRAY[1]).pack(side="right", padx=12)
-        self._info = ctk.CTkLabel(hdr, text="", font=("Arial", 12), text_color=("#64748b", "#94a3b8"))
+        self._info = ctk.CTkLabel(hdr, text="", font=("Segoe UI", 12), text_color=("#64748b", "#94a3b8"))
         self._info.pack(side="right", padx=8)
 
-        card = ctk.CTkFrame(self, fg_color=("white", "#1e1e1e"), corner_radius=12)
+        card = ctk.CTkFrame(self, fg_color=("#ffffff", "#181b22"), corner_radius=12)
         card.pack(fill="both", expand=True, padx=16, pady=8)
         self._tree = ttk.Treeview(card, show="headings", style="Banco.Treeview")
         ys = ttk.Scrollbar(card, orient="vertical", command=self._tree.yview)
@@ -61,7 +61,7 @@ class BancoFrame(ctk.CTkFrame):
 
         ctk.CTkLabel(self, text=f"Somente leitura · mostra até {LIMITE} linhas (mais recentes primeiro) · "
                                 f"colunas de senha/token aparecem mascaradas",
-                     font=("Arial", 11), text_color=("#64748b", "#94a3b8")).pack(anchor="w", padx=20, pady=(0, 10))
+                     font=("Segoe UI", 11), text_color=("#64748b", "#94a3b8")).pack(anchor="w", padx=20, pady=(0, 10))
 
     def _estilo(self):
         escuro = ctk.get_appearance_mode() == "Dark"
@@ -69,8 +69,8 @@ class BancoFrame(ctk.CTkFrame):
         st = ttk.Style()
         st.theme_use("clam")
         st.configure("Banco.Treeview", background=fundo, fieldbackground=fundo, foreground=texto,
-                     rowheight=24, font=("Arial", 10), borderwidth=0)
-        st.configure("Banco.Treeview.Heading", background=cab, foreground=texto, font=("Arial", 10, "bold"))
+                     rowheight=24, font=("Segoe UI", 10), borderwidth=0)
+        st.configure("Banco.Treeview.Heading", background=cab, foreground=texto, font=("Segoe UI", 10, "bold"))
         st.map("Banco.Treeview", background=[("selected", "#1a6fd4")])
 
     def refresh(self):

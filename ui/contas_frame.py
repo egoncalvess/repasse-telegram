@@ -12,7 +12,7 @@ HDR_BG     = ("#e2e8f2", "#1e293b")
 
 class ContasFrame(ctk.CTkFrame):
     def __init__(self, parent):
-        super().__init__(parent, corner_radius=0, fg_color=("#f1f5fb", "#121212"))
+        super().__init__(parent, corner_radius=0, fg_color=("#f4f6fb", "#0f1115"))
         self._selected: int | None = None
         self._rows: dict = {}
         self._build()
@@ -21,11 +21,11 @@ class ContasFrame(ctk.CTkFrame):
 
     def _build(self):
         # Header
-        hdr = ctk.CTkFrame(self, fg_color=("white", "#1e1e1e"), corner_radius=12)
+        hdr = ctk.CTkFrame(self, fg_color=("#ffffff", "#181b22"), corner_radius=12)
         hdr.pack(fill="x", padx=16, pady=(16, 8))
 
         ctk.CTkLabel(hdr, text="Gerenciar Contas",
-                     font=("Arial", 18, "bold")).pack(side="left", padx=16, pady=14)
+                     font=("Segoe UI", 18, "bold")).pack(side="left", padx=16, pady=14)
 
         btn_bar = ctk.CTkFrame(hdr, fg_color="transparent")
         btn_bar.pack(side="right", padx=12, pady=10)
@@ -37,14 +37,14 @@ class ContasFrame(ctk.CTkFrame):
         _btn(btn_bar, "↻ Atualizar",  self.refresh,        BTN_BLUE, width=90).pack(side="left", padx=4)
 
         # Table
-        card = ctk.CTkFrame(self, fg_color=("white", "#1e1e1e"), corner_radius=12)
+        card = ctk.CTkFrame(self, fg_color=("#ffffff", "#181b22"), corner_radius=12)
         card.pack(fill="both", expand=True, padx=16, pady=8)
 
         cols = [("Cód.", 55), ("Tipo", 70), ("Telefone", 160), ("Apelido", 160), ("Status", 130)]
         hrow = ctk.CTkFrame(card, fg_color=HDR_BG, corner_radius=8)
         hrow.pack(fill="x", padx=8, pady=(8, 0))
         for col, w in cols:
-            ctk.CTkLabel(hrow, text=col, font=("Arial", 12, "bold"),
+            ctk.CTkLabel(hrow, text=col, font=("Segoe UI", 12, "bold"),
                          width=w, anchor="w").pack(side="left", padx=8, pady=8)
 
         self._list = ctk.CTkScrollableFrame(card, fg_color="transparent")
@@ -71,12 +71,12 @@ class ContasFrame(ctk.CTkFrame):
         tipo_label = "✈️ TG"
         tipo_color = ("#1a6fd4", "#3b82f6")
 
-        ctk.CTkLabel(row, text=str(conta["id"]),    width=55,  anchor="w", font=("Arial", 12)).pack(side="left", padx=8, pady=8)
-        ctk.CTkLabel(row, text=tipo_label,          width=70,  anchor="w", font=("Arial", 12, "bold"), text_color=tipo_color).pack(side="left")
-        ctk.CTkLabel(row, text=conta["telefone"],   width=160, anchor="w", font=("Arial", 12)).pack(side="left")
-        ctk.CTkLabel(row, text=conta["apelido"] or "-", width=160, anchor="w", font=("Arial", 12)).pack(side="left")
+        ctk.CTkLabel(row, text=str(conta["id"]),    width=55,  anchor="w", font=("Segoe UI", 12)).pack(side="left", padx=8, pady=8)
+        ctk.CTkLabel(row, text=tipo_label,          width=70,  anchor="w", font=("Segoe UI", 12, "bold"), text_color=tipo_color).pack(side="left")
+        ctk.CTkLabel(row, text=conta["telefone"],   width=160, anchor="w", font=("Segoe UI", 12)).pack(side="left")
+        ctk.CTkLabel(row, text=conta["apelido"] or "-", width=160, anchor="w", font=("Segoe UI", 12)).pack(side="left")
         ctk.CTkLabel(row, text="● " + conta["status"].capitalize(),
-                     width=130, anchor="w", font=("Arial", 12), text_color=sc).pack(side="left")
+                     width=130, anchor="w", font=("Segoe UI", 12), text_color=sc).pack(side="left")
 
         for w in [row] + list(row.winfo_children()):
             w.bind("<Button-1>", lambda e, cid=conta["id"]: self._select(cid))
@@ -155,7 +155,7 @@ class AdicionarContaDialog(ctk.CTkToplevel):
         self.resizable(False, False)
 
         ctk.CTkLabel(self, text="Adicionar Conta Telegram",
-                     font=("Arial", 15, "bold")).pack(pady=(20, 15))
+                     font=("Segoe UI", 15, "bold")).pack(pady=(20, 15))
 
         ctk.CTkLabel(self, text="Telefone com DDD (Ex: +5511999999999)").pack()
         self._phone = ctk.CTkEntry(self, width=300, placeholder_text="+55 11 99999-9999")
@@ -188,7 +188,7 @@ class CodigoDialog(ctk.CTkToplevel):
         self.resizable(False, False)
 
         ctk.CTkLabel(self, text=f"Código enviado para\n{conta['telefone']}",
-                     font=("Arial", 13), justify="center").pack(pady=(20, 16))
+                     font=("Segoe UI", 13), justify="center").pack(pady=(20, 16))
 
         ctk.CTkLabel(self, text="Código de verificação").pack()
         self._code = ctk.CTkEntry(self, width=300, placeholder_text="12345")
