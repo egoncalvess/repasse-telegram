@@ -8,13 +8,16 @@ import threading
 import json
 import re
 import time
-from datetime import datetime
 
 from telethon import TelegramClient, events, Button
+from telethon.errors import FloodWaitError
 from telethon.sessions import StringSession
 from telethon.tl.types import MessageMediaWebPage
 
 import database as db
+
+MAX_FLOOD_WAIT_S = 600   # espera pedida pelo Telegram acima disso vira falha (não segura a fila por horas)
+TENTATIVAS_ENVIO = 3
 
 
 class TelegramManager:
@@ -27,9 +30,10 @@ class TelegramManager:
         self.bot: TelegramClient | None = None              # bot oficial: publica e serve o painel
         self.clients: dict[int, TelegramClient] = {}       # conta_id -> client
         self._pending: dict[int, TelegramClient] = {}      # aguardando código
-        self._handlers: dict[int, callable] = {}           # repasse_id -> handler fn
+        self._handlers: dict[int, list] = {}               # repasse_id -> handlers (mensagem e álbum)
         self._radar_handlers: dict[int, callable] = {}     # conta_id -> handler do radar
-        self._daily_count: dict[int, dict] = {}            # repasse_id -> {date, count}
+        self._ritmo: dict[int, dict] = {}                  # repasse_id -> {lock, ultimo envio (monotonic)}
+        self._ofertas_em_envio: set[str] = set()           # chaves de produto reservadas por envios em curso
 
     # ── Loop ────────────────────────────────────────────────────────────────
 
@@ -115,20 +119,37 @@ class TelegramManager:
         if isinstance(entity, (str, int)):  # resolve_entity devolve o próprio identificador quando falha
             quem = f"@{(await client.get_me()).username}" if client is self.bot else "a conta"
             raise RuntimeError(f"{quem} não tem acesso ao destino {destino}: adicione como administrador do grupo/canal.")
-        return await client.send_message(entity, texto, file=file, buttons=buttons,
-                                         parse_mode="html" if html else ())
+        for tentativa in range(1, TENTATIVAS_ENVIO + 1):
+            try:
+                return await client.send_message(entity, texto, file=file, buttons=buttons,
+                                                 parse_mode="html" if html else ())
+            except FloodWaitError as e:
+                if tentativa == TENTATIVAS_ENVIO or e.seconds > MAX_FLOOD_WAIT_S:
+                    raise
+                print(f"[Envio] Telegram pediu {e.seconds}s de espera antes de publicar em {destino}; aguardando.")
+                await asyncio.sleep(e.seconds + 1)
+                for f in (file if isinstance(file, list) else [file]):
+                    if isinstance(f, io.BytesIO):
+                        f.seek(0)  # o upload da tentativa anterior consumiu o arquivo
 
     async def _midia_para_envio(self, msg):
-        """Mídia da origem pronta para reenvio. O bot não enxerga arquivos da conta: baixa em memória."""
+        """Mídia da origem pronta para reenvio. O bot não enxerga arquivos da conta: baixa os bytes uma vez."""
         if not msg.media or isinstance(msg.media, MessageMediaWebPage):
             return None  # prévia de link é gerada de novo pelo próprio Telegram
         if not self.via_bot():
             return msg.media
         buf = io.BytesIO()
         await msg.download_media(file=buf)
-        buf.name = "arquivo" + (msg.file.ext or "")
-        buf.seek(0)
-        return buf
+        return "arquivo" + (msg.file.ext or ""), buf.getvalue()
+
+    @staticmethod
+    def _arquivo(midia):
+        """Arquivo para um envio: bytes baixados viram um BytesIO novo por destino (o upload consome o stream)."""
+        if isinstance(midia, tuple):
+            buf = io.BytesIO(midia[1])
+            buf.name = midia[0]
+            return buf
+        return midia
 
     # ── Conexão de conta ─────────────────────────────────────────────────────
 
@@ -299,26 +320,22 @@ class TelegramManager:
         subs = json.loads(r["substituicoes"] or "[]")
         destinos = db.listar_destinos(repasse_id)
 
-        async def _handler(event):
+        async def _processar(msgs: list, text: str):
+            """Uma postagem da origem (mensagem única ou álbum) passa pelos filtros e vai para os destinos."""
             # Verificar se repasse ainda está ativo
             current = db.get_repasse(repasse_id)
             if not current or not current["ativo"]:
                 return
-            chat = await event.get_chat()
-            print(f"[Repasse {current['descricao']}] nova mensagem de {getattr(chat, 'title', event.chat_id)}")
+            chat = await msgs[0].get_chat()
+            print(f"[Repasse {current['descricao']}] nova mensagem de {getattr(chat, 'title', msgs[0].chat_id)}")
 
             # Pausa global (painel do bot)
             if db.get_config("pausado", "0") == "1":
                 return
 
-            # Limite diário (só conta mensagens efetivamente enviadas, ver final do handler)
-            limite = current["limite_diario"]
-            today = datetime.now().strftime("%Y-%m-%d")
-            cnt = self._daily_count.get(repasse_id, {"date": "", "count": 0})
-            if cnt["date"] != today:
-                cnt = {"date": today, "count": 0}
-                self._daily_count[repasse_id] = cnt
-            if limite > 0 and cnt["count"] >= limite:
+            # Limite diário (contado no banco: sobrevive a reinícios; conferido de novo antes de enviar)
+            limite = current["limite_diario"] or 0
+            if limite > 0 and db.enviadas_hoje(repasse_id) >= limite:
                 return
 
             # Horário (aceita janela que cruza a meia-noite, ex.: 22:00–06:00)
@@ -327,8 +344,6 @@ class TelegramManager:
             import autonomia
             if not autonomia.dentro_do_horario(h_ini, h_fim):
                 return
-
-            text = event.message.text or ""
 
             # Filtro bloqueio de termos
             termos_bloquear = current["termos_bloquear"] or ""
@@ -348,15 +363,14 @@ class TelegramManager:
                 if not allowed:
                     return
 
-            # Filtros de mídia
-            msg = event.message
+            # Filtros de mídia (num álbum, basta um item do tipo bloqueado)
             if filtros.get("links") and re.search(r"https?://\S+", text):
                 return
-            if filtros.get("imagens") and msg.photo:
+            if filtros.get("imagens") and any(m.photo for m in msgs):
                 return
-            if filtros.get("videos") and msg.video:
+            if filtros.get("videos") and any(m.video for m in msgs):
                 return
-            if filtros.get("audios") and (msg.audio or msg.voice):
+            if filtros.get("audios") and any(m.audio or m.voice for m in msgs):
                 return
 
             # Ofertas: exige link de loja e/ou ignora produto já publicado nas últimas 24h
@@ -366,55 +380,81 @@ class TelegramManager:
                 chaves = await dedup.chaves_do_texto(text)
                 if filtros.get("somente_ofertas") and not chaves:
                     return
-                if filtros.get("sem_repetidas") and chaves and chaves <= db.ofertas_recentes(chaves):
+                # Produto em envio agora (outro canal postou a mesma oferta segundos antes) também conta como repetido
+                if filtros.get("sem_repetidas") and chaves and chaves <= (db.ofertas_recentes(chaves)
+                                                                          | self._ofertas_em_envio):
                     db.adicionar_historico(repasse_id, "-", "Ignorada", "Produto já publicado nas últimas 24h")
                     return
 
-            # Substituições manuais
-            for sub in subs:
-                busca = sub.get("busca", "")
-                replace = sub.get("substituir", "")
-                if busca:
-                    text = text.replace(busca, replace)
+            # Reserva os produtos até o fim do envio (checagem e reserva sem await entre elas)
+            reservadas = (chaves - self._ofertas_em_envio) if filtros.get("sem_repetidas") else set()
+            self._ofertas_em_envio |= reservadas
+            try:
+                # Substituições manuais
+                for sub in subs:
+                    busca = sub.get("busca", "")
+                    replace = sub.get("substituir", "")
+                    if busca:
+                        text = text.replace(busca, replace)
 
-            # Substituição inteligente de afiliados
-            if filtros.get("substituir_afiliados"):
-                try:
-                    from affiliate_helper import converter_links
-                    text, nao_convertidos = await converter_links(text)
-                except Exception as aff_err:
-                    db.adicionar_historico(repasse_id, "-", "Erro Afiliados", str(aff_err))
-                    nao_convertidos = ["(erro na conversão)"]
-                # Não divulga link que renderia comissão para outra pessoa
-                if nao_convertidos and filtros.get("exigir_afiliado"):
-                    db.adicionar_historico(repasse_id, "-", "Ignorada",
-                                           "Link sem conversão p/ afiliado: " + ", ".join(nao_convertidos)[:300])
-                    return
+                # Substituição inteligente de afiliados
+                if filtros.get("substituir_afiliados"):
+                    try:
+                        from affiliate_helper import converter_links
+                        text, nao_convertidos = await converter_links(text)
+                    except Exception as aff_err:
+                        db.adicionar_historico(repasse_id, "-", "Erro Afiliados", str(aff_err))
+                        nao_convertidos = ["(erro na conversão)"]
+                    # Não divulga link que renderia comissão para outra pessoa
+                    if nao_convertidos and filtros.get("exigir_afiliado"):
+                        db.adicionar_historico(repasse_id, "-", "Ignorada",
+                                               "Link sem conversão p/ afiliado: " + ", ".join(nao_convertidos)[:300])
+                        return
 
-            # Delay
-            delay = current["delay"] or 1
-            if delay > 0:
-                await asyncio.sleep(delay)
+                # Ritmo: um envio por vez por repasse, com pelo menos `delay` segundos entre eles
+                ritmo = self._ritmo.setdefault(repasse_id, {"lock": asyncio.Lock(), "ultimo": 0.0})
+                async with ritmo["lock"]:
+                    if limite > 0 and db.enviadas_hoje(repasse_id) >= limite:
+                        return
+                    delay = current["delay"] if current["delay"] is not None else 1
+                    espera = ritmo["ultimo"] + delay - time.monotonic()
+                    if espera > 0:
+                        await asyncio.sleep(espera)
 
-            # Enviar para destinos (bot se ativo, senão a própria conta)
-            enviado = False
-            for dest in destinos:
-                try:
-                    media = await self._midia_para_envio(event.message)
-                    await self.enviar(r["conta_id"], dest["grupo_id"], text, file=media)
-                    db.incrementar_repasse(repasse_id)
-                    db.adicionar_historico(repasse_id, dest["grupo_nome"], "Sucesso")
-                    enviado = True
-                except Exception as exc:
-                    db.adicionar_historico(repasse_id, dest["grupo_nome"], "Falha", str(exc))
-                    await autonomia.alertar(self, f"repasse{repasse_id}-{dest['grupo_id']}",
-                                            f"Repasse '{current['descricao']}' falhou para {dest['grupo_nome']}: {exc}")
-            if enviado:
-                cnt["count"] += 1
-                if chaves:
-                    db.marcar_ofertas(chaves)
+                    # Mídia baixada uma vez só, reaproveitada em todos os destinos
+                    midias = [m for m in [await self._midia_para_envio(msg) for msg in msgs] if m is not None]
 
-        # Registrar handler em todas as origens do repasse
+                    # Enviar para destinos (bot se ativo, senão a própria conta)
+                    enviado = False
+                    for dest in destinos:
+                        try:
+                            arquivos = [self._arquivo(m) for m in midias]
+                            arquivo = arquivos if len(arquivos) > 1 else (arquivos[0] if arquivos else None)
+                            await self.enviar(r["conta_id"], dest["grupo_id"], text, file=arquivo)
+                            db.incrementar_repasse(repasse_id)
+                            db.adicionar_historico(repasse_id, dest["grupo_nome"], "Sucesso")
+                            enviado = True
+                        except Exception as exc:
+                            db.adicionar_historico(repasse_id, dest["grupo_nome"], "Falha", str(exc))
+                            await autonomia.alertar(self, f"repasse{repasse_id}-{dest['grupo_id']}",
+                                                    f"Repasse '{current['descricao']}' falhou para {dest['grupo_nome']}: {exc}")
+                    ritmo["ultimo"] = time.monotonic()
+                    if enviado:
+                        db.registrar_envio_dia(repasse_id)
+                        if chaves:
+                            db.marcar_ofertas(chaves)
+            finally:
+                self._ofertas_em_envio -= reservadas
+
+        async def _nova_mensagem(event):
+            if event.message.grouped_id:  # item de álbum: vai inteiro pelo handler de Album
+                return
+            await _processar([event.message], event.message.text or "")
+
+        async def _novo_album(event):
+            await _processar(list(event.messages), next((m.text for m in event.messages if m.text), ""))
+
+        # Registrar handlers em todas as origens do repasse
         origens = db.listar_origens(repasse_id) or ([{"origem_id": r["origem_id"], "origem_nome": r["origem_nome"]}]
                                                      if r["origem_id"] else [])
         entidades = []
@@ -427,14 +467,15 @@ class TelegramManager:
             except Exception as e:
                 db.adicionar_historico(repasse_id, o["origem_nome"] or o["origem_id"], "Falha ao iniciar", str(e))
         if entidades:
-            client.add_event_handler(_handler, events.NewMessage(chats=entidades))
-            self._handlers[repasse_id] = _handler
+            client.add_event_handler(_nova_mensagem, events.NewMessage(chats=entidades))
+            client.add_event_handler(_novo_album, events.Album(chats=entidades))
+            self._handlers[repasse_id] = [_nova_mensagem, _novo_album]
 
     async def _stop_repasse(self, repasse_id: int, conta_id: int):
-        handler = self._handlers.pop(repasse_id, None)
-        if handler:
-            client = self.clients.get(conta_id)
-            if client:
+        handlers = self._handlers.pop(repasse_id, [])
+        client = self.clients.get(conta_id)
+        if client:
+            for handler in handlers:
                 client.remove_event_handler(handler)
 
     # ── Importação de histórico (Radar) ──────────────────────────────────────

@@ -16,8 +16,9 @@ jobs:
         with:
           python-version: "3.13"
           cache: pip
-      - run: pip install -r requirements.txt pyinstaller==6.20.0
+      - run: pip install -r requirements.txt pyinstaller==6.20.0 pytest==8.4.2
       - run: python -m compileall -q . -x "\.venv|build|dist"
+      - run: python -m pytest -q tests
       - run: pyinstaller --onefile --windowed --name repasse_telegram --icon assets/logo.ico --add-data "assets;assets" --collect-data customtkinter main.py
       - uses: actions/upload-artifact@v4
         with:

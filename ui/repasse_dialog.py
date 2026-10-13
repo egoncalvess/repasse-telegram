@@ -106,7 +106,7 @@ class RepasseDialog(ctk.CTkToplevel):
         sec = _secao(main, "Ritmo de envio")
         fr = ctk.CTkFrame(sec, fg_color="transparent")
         fr.pack(fill="x", padx=14, pady=(0, 12))
-        self._delay = _campo(fr, "Espera (seg)", "1")
+        self._delay = _campo(fr, "Intervalo entre envios (seg)", "1")
         self._limite = _campo(fr, "Limite/dia (0 = sem)", "0")
         self._h_ini = _campo(fr, "Das", "00:00")
         self._h_fim = _campo(fr, "Até", "00:00")
@@ -140,7 +140,7 @@ class RepasseDialog(ctk.CTkToplevel):
         self._termos_bloquear.insert(0, r["termos_bloquear"] or "")
         self._termos_permitir.insert(0, r["termos_permitir"] or "")
         self._subs = json.loads(r["substituicoes"] or "[]")
-        for campo, valor in [(self._delay, r["delay"] or 1), (self._limite, r["limite_diario"] or 0),
+        for campo, valor in [(self._delay, 1 if r["delay"] is None else r["delay"]), (self._limite, r["limite_diario"] or 0),
                              (self._h_ini, r["horario_inicio"] or "00:00"), (self._h_fim, r["horario_fim"] or "00:00")]:
             campo.delete(0, "end")
             campo.insert(0, str(valor))
@@ -226,8 +226,10 @@ class RepasseDialog(ctk.CTkToplevel):
             return
         try:
             delay, limite = int(self._delay.get() or 1), int(self._limite.get() or 0)
+            if delay < 0 or limite < 0:
+                raise ValueError
         except ValueError:
-            messagebox.showwarning("Aviso", "Espera e limite devem ser números.", parent=self)
+            messagebox.showwarning("Aviso", "Espera e limite devem ser números (0 ou mais).", parent=self)
             return
         h_ini, h_fim = self._h_ini.get().strip() or "00:00", self._h_fim.get().strip() or "00:00"
         if not all(re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", h) for h in (h_ini, h_fim)):
