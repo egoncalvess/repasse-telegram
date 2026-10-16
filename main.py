@@ -1,5 +1,8 @@
+import os
 import sys
 import threading
+from pathlib import Path
+
 import database as db
 
 # Garantir codificação UTF-8 para stdout e stderr no Windows
@@ -10,7 +13,16 @@ if sys.platform.startswith("win"):
     except AttributeError:
         pass
 
+def _pasta_do_app() -> Path:
+    """Pasta do .exe (ou do main.py): data/ fica sempre ao lado do app, qualquer que seja a pasta de início do atalho."""
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parent
+
+
 def main():
+    os.chdir(_pasta_do_app())  # caminhos relativos (data/repasse.db, data/imagens, backups, log) partem daqui
+
     # Inicializar banco
     db.init_db()
 
