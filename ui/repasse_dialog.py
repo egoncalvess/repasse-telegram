@@ -8,7 +8,8 @@ import customtkinter as ctk
 from tkinter import messagebox
 import database as db
 from telegram_manager import telegram_manager
-from ui.estilo import botao, FUNDO, CARD, BORDA, TEXTO_SEC, F_SUBTITULO, F_PEQUENA, F_NORMAL
+from ui import estilo as e
+from ui.fundo import em_segundo_plano
 from ui.seletor_chats import SeletorChats
 
 
@@ -23,107 +24,93 @@ class RepasseDialog(ctk.CTkToplevel):
         self._leitura: dict[str, str] = {}  # origem_id -> "bot" | "conta" | "sem acesso"
 
         r = db.get_repasse(repasse_id) if repasse_id else None
-        self.title("Editar Repasse" if r else "Novo Repasse")
-        self.geometry("780x700")
+        e.janela(self, "Editar repasse" if r else "Novo repasse", 760, 720, parent)
         self.minsize(640, 520)
-        self.configure(fg_color=FUNDO)
-        self.transient(parent)
-        self.grab_set()
 
-        self._build()
+        self._build(r)
         if r:
             self._populate(r)
         self._render_listas()
 
     # ── Layout ───────────────────────────────────────────────────────────────
 
-    def _build(self):
-        foot = ctk.CTkFrame(self, fg_color=CARD, corner_radius=0)
-        foot.pack(fill="x", side="bottom")
-        botao(foot, "💾 Salvar", self._save, "azul", 140).pack(side="right", padx=16, pady=10)
-        botao(foot, "Cancelar", self.destroy, "cinza", 100).pack(side="right", pady=10)
+    def _build(self, r):
+        e.rodape_dialogo(self, "Salvar", self._save)
+        main = e.area_rolavel(self, fundo=e.SUPERFICIE)
+        main.pack(fill="both", expand=True, padx=(e.E3, e.E1), pady=(e.E3, 0))
+        e.rotulo(main, "Editar repasse" if r else "Novo repasse", e.F_SECAO).pack(anchor="w", pady=(0, e.E2))
 
-        main = ctk.CTkScrollableFrame(self, fg_color=FUNDO)
-        main.pack(fill="both", expand=True)
-
-        sec = _secao(main, "Identificação")
-        self._nome = ctk.CTkEntry(sec, placeholder_text="Ex: Canais de promoção → PROMO DO BAIANO", height=34)
-        self._nome.pack(fill="x", padx=14, pady=(0, 10))
+        self._nome = e.campo(main, "Nome", largura=480, dica="Ex.: Canais de promoção para o meu canal")
         contas = db.listar_contas()
         self._conta_map = {f"{c['apelido']} ({c['telefone']})": c["id"] for c in contas}
-        opts = list(self._conta_map) or ["(nenhuma conta cadastrada)"]
-        linha = ctk.CTkFrame(sec, fg_color="transparent")
-        linha.pack(fill="x", padx=14, pady=(0, 12))
-        ctk.CTkLabel(linha, text="Conta que lê as origens:", font=F_NORMAL).pack(side="left")
+        opts = list(self._conta_map) or ["Nenhuma conta cadastrada"]
+        e.rotulo(main, "Conta que lê as origens onde o bot não está", e.F_LEGENDA, secundario=True).pack(
+            anchor="w", pady=(0, 4))
         self._conta_var = ctk.StringVar(value=opts[0])
-        ctk.CTkOptionMenu(linha, variable=self._conta_var, values=opts, width=280).pack(side="left", padx=8)
+        e.menu(main, self._conta_var, opts, largura=320).pack(anchor="w", pady=(0, e.E3))
 
-        sec = _secao(main, "De onde → para onde")
-        grade = ctk.CTkFrame(sec, fg_color="transparent")
-        grade.pack(fill="x", padx=14, pady=(0, 12))
-        grade.grid_columnconfigure((0, 1), weight=1, uniform="col")
-        self._lbl_origens = self._bloco_lista(grade, 0, "📥 Origens", "Escolher origens...", self._escolher_origens)
-        self._lbl_destinos = self._bloco_lista(grade, 1, "📤 Destinos", "Escolher destinos...", self._escolher_destinos)
-        ctk.CTkLabel(sec, text="O bot só lê grupos e canais onde foi adicionado (em canal, como administrador). "
-                               "As demais origens são lidas pela conta, que nunca envia nada quando há bot.",
-                     font=F_PEQUENA, text_color=TEXTO_SEC, justify="left", wraplength=700).pack(anchor="w", padx=14,
-                                                                                              pady=(0, 12))
+        sec = e.secao(main, "Origens e destinos", padx=0)
+        self._lbl_origens = self._bloco_lista(sec, "Origens", "Escolher origens", self._escolher_origens)
+        e.paragrafo(sec, "O bot só lê grupos e canais onde foi adicionado (em canal, como administrador). As demais "
+                      "origens são lidas pela conta, que nunca envia nada quando há bot.", pady=(0, e.E2))
+        self._lbl_destinos = self._bloco_lista(sec, "Destinos", "Escolher destinos", self._escolher_destinos)
 
-        sec = _secao(main, "Ofertas e afiliação")
-        for linha_opts in [[("_f_aff", "Trocar links pelos meus links de afiliado"),
-                            ("_f_exigir", "Só repassar se todos os links virarem meus")],
-                           [("_f_ofertas", "Somente ofertas (msg com link de loja)"),
-                            ("_f_dedup", "Não repetir o mesmo produto (24h)")]]:
-            fr = ctk.CTkFrame(sec, fg_color="transparent")
-            fr.pack(fill="x", padx=14, pady=(0, 8))
-            for attr, txt in linha_opts:
-                cb = ctk.CTkCheckBox(fr, text=txt, font=F_NORMAL)
-                cb.pack(side="left", padx=(0, 18))
-                setattr(self, attr, cb)
-
-        sec = _secao(main, "Bloquear mensagens com mídia")
-        fr = ctk.CTkFrame(sec, fg_color="transparent")
-        fr.pack(fill="x", padx=14, pady=(0, 12))
-        for attr, txt in [("_f_links", "Links"), ("_f_img", "Imagens"), ("_f_vid", "Vídeos"), ("_f_aud", "Áudios")]:
-            cb = ctk.CTkCheckBox(fr, text=txt, font=F_NORMAL)
-            cb.pack(side="left", padx=(0, 18))
+        sec = e.secao(main, "Ofertas e afiliação", padx=0)
+        for attr, txt in [("_f_aff", "Trocar links pelos meus links de afiliado"),
+                          ("_f_exigir", "Só repassar se todos os links virarem meus"),
+                          ("_f_ofertas", "Somente ofertas (mensagem com link de loja)"),
+                          ("_f_dedup", "Não repetir o mesmo produto em 24 horas")]:
+            cb = e.caixa_marcar(sec, txt)
+            cb.pack(anchor="w", pady=(0, e.E1))
             setattr(self, attr, cb)
 
-        sec = _secao(main, "Filtro por palavras (separe por vírgula)")
-        self._termos_bloquear = ctk.CTkEntry(sec, placeholder_text="Bloquear se contiver: patrocinado, sorteio", height=34)
-        self._termos_bloquear.pack(fill="x", padx=14, pady=(0, 8))
-        self._termos_permitir = ctk.CTkEntry(sec, placeholder_text="Repassar SOMENTE se contiver: R$, desconto, cupom", height=34)
-        self._termos_permitir.pack(fill="x", padx=14, pady=(0, 12))
-
-        sec = _secao(main, "Substituições de texto")
+        sec = e.secao(main, "Bloquear mensagens com", padx=0)
         fr = ctk.CTkFrame(sec, fg_color="transparent")
-        fr.pack(fill="x", padx=14, pady=(0, 6))
-        fr.grid_columnconfigure((0, 2), weight=1)
-        self._sub_busca = ctk.CTkEntry(fr, placeholder_text="Buscar", height=32)
-        self._sub_busca.grid(row=0, column=0, sticky="ew")
-        ctk.CTkLabel(fr, text=" → ").grid(row=0, column=1)
-        self._sub_rep = ctk.CTkEntry(fr, placeholder_text="Substituir por", height=32)
-        self._sub_rep.grid(row=0, column=2, sticky="ew")
-        botao(fr, "+ Adicionar", self._add_sub, "azul", 100).grid(row=0, column=3, padx=(8, 0))
+        fr.pack(anchor="w")
+        for attr, txt in [("_f_links", "Links"), ("_f_img", "Imagens"), ("_f_vid", "Vídeos"), ("_f_aud", "Áudios")]:
+            cb = e.caixa_marcar(fr, txt)
+            cb.pack(side="left", padx=(0, e.E3))
+            setattr(self, attr, cb)
+
+        sec = e.secao(main, "Filtro por palavras", padx=0)
+        self._termos_bloquear = e.campo(sec, "Bloquear se contiver (separe por vírgula)", largura=480,
+                                        dica="patrocinado, sorteio")
+        self._termos_permitir = e.campo(sec, "Repassar somente se contiver (separe por vírgula)", largura=480,
+                                        dica="R$, desconto, cupom")
+
+        sec = e.secao(main, "Substituições de texto", padx=0)
+        fr = ctk.CTkFrame(sec, fg_color="transparent")
+        fr.pack(anchor="w", pady=(0, e.E1))
+        self._sub_busca = e.entrada(fr, 200, placeholder_text="Buscar")
+        self._sub_busca.pack(side="left")
+        e.rotulo(fr, "por", e.F_LEGENDA, secundario=True).pack(side="left", padx=e.E1)
+        self._sub_rep = e.entrada(fr, 200, placeholder_text="Substituir por")
+        self._sub_rep.pack(side="left")
+        e.botao(fr, "Adicionar", self._add_sub).pack(side="left", padx=(e.E1, 0))
         self._sub_list = ctk.CTkFrame(sec, fg_color="transparent")
-        self._sub_list.pack(fill="x", padx=14, pady=(0, 12))
+        self._sub_list.pack(fill="x")
 
-        sec = _secao(main, "Ritmo de envio")
+        sec = e.secao(main, "Ritmo de envio", padx=0)
         fr = ctk.CTkFrame(sec, fg_color="transparent")
-        fr.pack(fill="x", padx=14, pady=(0, 12))
-        self._delay = _campo(fr, "Intervalo entre envios (seg)", "1")
-        self._limite = _campo(fr, "Limite/dia (0 = sem)", "0")
-        self._h_ini = _campo(fr, "Das", "00:00")
-        self._h_fim = _campo(fr, "Até", "00:00")
-        ctk.CTkLabel(fr, text="00:00–00:00 = o dia todo", font=F_PEQUENA, text_color=TEXTO_SEC).pack(side="left", padx=6)
+        fr.pack(anchor="w")
+        campos = []
+        for titulo, padrao in [("Intervalo entre envios (seg)", "1"), ("Limite por dia (0 = sem)", "0"),
+                               ("Das", "00:00"), ("Até", "00:00")]:
+            caixa = ctk.CTkFrame(fr, fg_color="transparent")
+            caixa.pack(side="left", padx=(0, e.E2))
+            campos.append(e.campo(caixa, titulo, padrao, largura=120 if len(campos) < 2 else 80, pady=(0, 0)))
+        self._delay, self._limite, self._h_ini, self._h_fim = campos
+        e.rotulo(sec, "00:00 até 00:00 = o dia todo", e.F_LEGENDA, secundario=True).pack(anchor="w", pady=(e.E1, 0))
 
-    def _bloco_lista(self, grade, col, titulo, txt_botao, comando):
-        caixa = ctk.CTkFrame(grade, fg_color=FUNDO, corner_radius=10)
-        caixa.grid(row=0, column=col, sticky="nsew", padx=(0, 8) if col == 0 else (8, 0))
-        ctk.CTkLabel(caixa, text=titulo, font=F_SUBTITULO).pack(anchor="w", padx=12, pady=(10, 4))
-        lbl = ctk.CTkLabel(caixa, text="", font=F_PEQUENA, text_color=TEXTO_SEC, justify="left", anchor="w")
-        lbl.pack(fill="x", padx=12)
-        botao(caixa, txt_botao, comando, "cinza", 170).pack(anchor="w", padx=12, pady=10)
+    def _bloco_lista(self, parent, titulo, txt_botao, comando):
+        caixa = ctk.CTkFrame(parent, fg_color="transparent")
+        caixa.pack(fill="x", pady=(0, e.E2))
+        topo = ctk.CTkFrame(caixa, fg_color="transparent")
+        topo.pack(fill="x")
+        e.rotulo(topo, titulo, e.F_CORPO_FORTE).pack(side="left")
+        e.botao_texto(topo, txt_botao, comando).pack(side="right")
+        lbl = e.rotulo(caixa, "", e.F_CORPO, secundario=True)
+        lbl.pack(fill="x", pady=(4, 0))
         return lbl
 
     # ── Populate (edição) ─────────────────────────────────────────────────────
@@ -155,9 +142,9 @@ class RepasseDialog(ctk.CTkToplevel):
     def _conta_id(self):
         cid = self._conta_map.get(self._conta_var.get())
         if not cid:
-            messagebox.showwarning("Aviso", "Cadastre e selecione uma conta.", parent=self)
+            messagebox.showwarning("Repasse", "Cadastre uma conta em Contas e selecione-a aqui.", parent=self)
         elif cid not in telegram_manager.clients:
-            messagebox.showwarning("Aviso", "Conta não conectada. Conecte em 'Contas' primeiro.", parent=self)
+            messagebox.showwarning("Repasse", "A conta está desconectada. Conecte-a em Contas para escolher os chats.", parent=self)
             cid = None
         return cid
 
@@ -199,20 +186,18 @@ class RepasseDialog(ctk.CTkToplevel):
         if not ids:
             return
 
-        def _volta(res, _err):
-            def _ui():
-                if self.winfo_exists():
-                    self._leitura.update(res)
-                    self._render_origens()
-            self.after(0, _ui)
-        telegram_manager.leitura_origens(self._conta_map.get(self._conta_var.get()), ids, _volta)
+        def _volta(res, err):
+            self._leitura.update(res if not err else {str(i): "sem acesso" for i in ids})
+            self._render_origens()
+        fut = telegram_manager._run(telegram_manager._leitura_origens(self._conta_map.get(self._conta_var.get()), ids))
+        em_segundo_plano(self, lambda: fut.result(timeout=60), _volta)
 
     # ── Substituições ─────────────────────────────────────────────────────────
 
     def _add_sub(self):
         busca = self._sub_busca.get().strip()
         if not busca:
-            messagebox.showwarning("Aviso", "Informe o texto a buscar.", parent=self)
+            messagebox.showwarning("Repasse", "Informe o texto a buscar.", parent=self)
             return
         self._subs.append({"busca": busca, "substituir": self._sub_rep.get().strip()})
         self._sub_busca.delete(0, "end")
@@ -227,13 +212,13 @@ class RepasseDialog(ctk.CTkToplevel):
         for w in self._sub_list.winfo_children():
             w.destroy()
         if not self._subs:
-            ctk.CTkLabel(self._sub_list, text="Nenhuma substituição", font=F_PEQUENA,
-                         text_color=TEXTO_SEC).pack(anchor="w")
+            e.rotulo(self._sub_list, "Nenhuma substituição", e.F_LEGENDA, secundario=True).pack(anchor="w")
         for i, s in enumerate(self._subs):
             row = ctk.CTkFrame(self._sub_list, fg_color="transparent")
-            row.pack(fill="x", pady=1)
-            ctk.CTkLabel(row, text=f'"{s["busca"]}" → "{s["substituir"]}"', font=F_PEQUENA).pack(side="left")
-            botao(row, "✕", lambda idx=i: self._remove_sub(idx), "vermelho", 30).pack(side="right")
+            row.pack(fill="x")
+            e.rotulo(row, f'"{s["busca"]}" vira "{s["substituir"]}"', e.F_CORPO).pack(side="left")
+            e.botao_texto(row, "Remover", lambda idx=i: self._remove_sub(idx), perigo=True).pack(side="left",
+                                                                                                padx=(e.E1, 0))
 
     # ── Salvar ────────────────────────────────────────────────────────────────
 
@@ -241,21 +226,21 @@ class RepasseDialog(ctk.CTkToplevel):
         nome = self._nome.get().strip()
         conta_id = self._conta_map.get(self._conta_var.get())
         if not nome or not conta_id:
-            messagebox.showwarning("Aviso", "Informe o nome e a conta.", parent=self)
+            messagebox.showwarning("Repasse", "Informe o nome e escolha a conta.", parent=self)
             return
         if not self._origens:
-            messagebox.showwarning("Aviso", "Escolha pelo menos uma origem.", parent=self)
+            messagebox.showwarning("Repasse", "Escolha pelo menos uma origem.", parent=self)
             return
         try:
             delay, limite = int(self._delay.get() or 1), int(self._limite.get() or 0)
             if delay < 0 or limite < 0:
                 raise ValueError
         except ValueError:
-            messagebox.showwarning("Aviso", "Espera e limite devem ser números (0 ou mais).", parent=self)
+            messagebox.showwarning("Repasse", "Intervalo e limite precisam ser números inteiros, 0 ou mais.", parent=self)
             return
         h_ini, h_fim = self._h_ini.get().strip() or "00:00", self._h_fim.get().strip() or "00:00"
         if not all(re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", h) for h in (h_ini, h_fim)):
-            messagebox.showwarning("Aviso", "Horários no formato HH:MM.", parent=self)
+            messagebox.showwarning("Repasse", "Use horários no formato HH:MM, como 08:00.", parent=self)
             return
 
         filtros = {"links": bool(self._f_links.get()), "imagens": bool(self._f_img.get()),
@@ -293,18 +278,3 @@ def _resumo(nomes: list[str]) -> str:
     if not nomes:
         return "Nenhum selecionado"
     return "\n".join(f"• {n[:60]}" for n in nomes[:6]) + (f"\n… e mais {len(nomes) - 6}" if len(nomes) > 6 else "")
-
-
-def _secao(parent, titulo: str):
-    c = ctk.CTkFrame(parent, fg_color=CARD, corner_radius=12, border_width=1, border_color=BORDA)
-    c.pack(fill="x", padx=16, pady=(12, 0))
-    ctk.CTkLabel(c, text=titulo, font=F_SUBTITULO).pack(anchor="w", padx=14, pady=(10, 8))
-    return c
-
-
-def _campo(parent, rotulo: str, padrao: str):
-    ctk.CTkLabel(parent, text=rotulo, font=F_PEQUENA).pack(side="left", padx=(0, 4))
-    e = ctk.CTkEntry(parent, width=64, height=30)
-    e.insert(0, padrao)
-    e.pack(side="left", padx=(0, 14))
-    return e

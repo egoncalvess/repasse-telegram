@@ -91,3 +91,22 @@ def publicar_oferta(chave: str, conta_id, destino: str, timeout: int = 60, orige
         raise
     db.registrar_publicacao(chave, destino, "enviado", origem)
     db.marcar_ofertas({chave})
+
+
+def queda(p: dict) -> tuple[float | None, int | None]:
+    """("antes", % de queda) para as listas, só com base real: preço "de" da loja ou média do histórico.
+    Entre os dois, vale o maior desconto comprovado. (None, None) sem queda comprovada."""
+    hoje, media, dias = p["preco_hoje"], p.get("media"), p.get("dias") or 0
+    opcoes = []
+    pct_loja = desconto_loja(p)
+    if pct_loja:
+        opcoes.append((pct_loja, p["preco_original"]))
+    if dias >= 3 and media and hoje < media * 0.95:
+        opcoes.append((round((1 - hoje / media) * 100), media))
+    if not opcoes:
+        minimo = p.get("minimo")
+        if dias >= DIAS_MIN_HISTORICO and minimo and hoje < minimo:
+            return minimo, round((1 - hoje / minimo) * 100)
+        return None, None
+    pct, antes = max(opcoes)
+    return antes, pct

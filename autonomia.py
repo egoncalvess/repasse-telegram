@@ -74,8 +74,10 @@ async def ciclo_piloto(tm) -> str:
 
     from buscador import permite_publicar
     # 200: produtos novos das buscas (sem histórico, só com preço "de" da loja) ficam no fim da ordenação
+    descartados = db.descartados()  # "Descartar" no app tira a oferta do piloto por 24 h
     candidatos = [p for p in db.menores_precos_do_dia(limit=200)
-                  if selo(p) and not db.ofertas_recentes({p["chave"]}, 24) and permite_publicar(p)]
+                  if selo(p) and p["chave"] not in descartados and not db.ofertas_recentes({p["chave"]}, 24)
+                  and permite_publicar(p)]
     if aprovacao:
         import admin_panel
         for p in candidatos:

@@ -6,7 +6,7 @@ import re
 import customtkinter as ctk
 from tkinter import messagebox
 
-from ui.estilo import Tabela, botao, F_SUBTITULO, F_PEQUENA, TEXTO_SEC, FUNDO
+from ui import estilo as e
 
 PROMO_RE = re.compile(r"promo|oferta|desconto|achad|cupom|black|pechincha|barato|liquida|bug|precinho|off\b", re.I)
 
@@ -19,12 +19,8 @@ class SeletorChats(ctk.CTkToplevel):
 
     def __init__(self, parent, conta_id: int, titulo: str, ao_confirmar, selecionados=(), atalho_promo=True):
         super().__init__(parent)
-        self.title(titulo)
-        self.geometry("720x560")
+        e.janela(self, titulo, 720, 580, parent)
         self.minsize(560, 420)
-        self.configure(fg_color=FUNDO)
-        self.transient(parent)
-        self.grab_set()
         self._ao_confirmar = ao_confirmar
         # IDs antigos foram salvos sem prefixo: aceita as formas marcadas também (-100… canal, -… grupo)
         self._marcados = set()
@@ -32,40 +28,38 @@ class SeletorChats(ctk.CTkToplevel):
             self._marcados |= {s, f"-100{s}", f"-{s}"} if s.isdigit() else {s}
         self._chats: list[dict] = []
 
+        e.rodape_dialogo(self, "Confirmar", self._confirmar)
+
         topo = ctk.CTkFrame(self, fg_color="transparent")
-        topo.pack(fill="x", padx=16, pady=(14, 6))
-        ctk.CTkLabel(topo, text=titulo, font=F_SUBTITULO).pack(side="left")
-        self._contador = ctk.CTkLabel(topo, text="", font=F_PEQUENA, text_color=TEXTO_SEC)
+        topo.pack(fill="x", padx=e.E3, pady=(e.E3, e.E2))
+        e.rotulo(topo, titulo, e.F_SECAO).pack(side="left")
+        self._contador = e.rotulo(topo, "", e.F_LEGENDA, secundario=True)
         self._contador.pack(side="right")
 
         barra = ctk.CTkFrame(self, fg_color="transparent")
-        barra.pack(fill="x", padx=16, pady=(0, 8))
-        self._busca = ctk.CTkEntry(barra, placeholder_text="🔎 Buscar por nome...", height=34)
+        barra.pack(fill="x", padx=e.E3, pady=(0, e.E2))
+        self._busca = e.entrada(barra, 300, placeholder_text="Buscar por nome")
         self._busca.pack(side="left", fill="x", expand=True)
         self._busca.bind("<KeyRelease>", lambda _: self._render())
         if atalho_promo:
-            botao(barra, "Marcar canais de promoção", self._marcar_promo, "cinza", 200).pack(side="left", padx=(8, 0))
-        botao(barra, "Limpar", self._limpar, "cinza", 80).pack(side="left", padx=(8, 0))
+            e.botao(barra, "Marcar canais de promoção", self._marcar_promo).pack(side="left", padx=(e.E1, 0))
+        e.botao_texto(barra, "Limpar", self._limpar).pack(side="left", padx=(e.E1, 0))
 
-        self._tabela = Tabela(self, [("marca", "✓", 1), ("nome", "Nome", 10), ("tipo", "Tipo", 2)], altura=14)
-        self._tabela.pack(fill="both", expand=True, padx=16)
-        self._tabela.tree.bind("<ButtonRelease-1>", self._alternar)
-        self._tabela.tree.bind("<space>", self._alternar)
+        e.rotulo(self, "Clique na linha para marcar ou desmarcar.", e.F_LEGENDA, secundario=True).pack(
+            side="bottom", anchor="w", padx=e.E3)
+        self._tabela = e.Tabela(self, [("marca", "Marcado", 2), ("nome", "Nome", 10), ("tipo", "Tipo", 2)],
+                                fundo=e.SUPERFICIE)
+        self._tabela.pack(fill="both", expand=True, padx=e.E3)
+        self._tabela.ao_clicar(self._alternar)
+        self._tabela.corpo.bind("<space>", lambda _: self._alternar(self._tabela.selecionado()))
 
-        ctk.CTkLabel(self, text="Clique na linha para marcar/desmarcar.", font=F_PEQUENA,
-                     text_color=TEXTO_SEC).pack(anchor="w", padx=16, pady=(4, 0))
-        rodape = ctk.CTkFrame(self, fg_color="transparent")
-        rodape.pack(fill="x", padx=16, pady=12)
-        botao(rodape, "Confirmar", self._confirmar, "azul", 130).pack(side="right")
-        botao(rodape, "Cancelar", self.destroy, "cinza", 100).pack(side="right", padx=8)
-
-        self._contador.configure(text="Carregando canais e grupos...")
+        self._contador.configure(text="Carregando canais e grupos…")
         from telegram_manager import telegram_manager
         telegram_manager.listar_chats(conta_id, lambda chats, err: self.after(0, self._carregado, chats, err))
 
     def _carregado(self, chats, err):
         if err:
-            messagebox.showerror("Erro", err, parent=self)
+            messagebox.showerror(self.title(), f"Não foi possível listar os chats da conta: {err}", parent=self)
             self.destroy()
             return
         self._chats = sorted(chats, key=lambda c: (c["id"] not in self._marcados, c["nome"].lower()))
@@ -77,19 +71,16 @@ class SeletorChats(ctk.CTkToplevel):
 
     def _render(self):
         vis = self._visiveis()
-        self._tabela.carregar([("✓" if c["id"] in self._marcados else "", c["nome"], c["tipo"]) for c in vis],
-                              ids=[c["id"] for c in vis])
+        self._tabela.carregar([("Sim" if c["id"] in self._marcados else ("—", "secundario"), c["nome"],
+                                c["tipo"]) for c in vis], ids=[c["id"] for c in vis])
         self._contador.configure(text=f"{len(self._marcados)} marcados · {len(self._chats)} disponíveis")
 
-    def _alternar(self, _=None):
-        cid = self._tabela.selecionado()
+    def _alternar(self, cid):
         if not cid:
             return
         self._marcados.symmetric_difference_update({cid})
         self._render()
-        if self._tabela.tree.exists(cid):
-            self._tabela.tree.selection_set(cid)
-            self._tabela.tree.see(cid)
+        self._tabela.selecionar(cid)
 
     def _marcar_promo(self):
         self._marcados |= {c["id"] for c in self._visiveis() if PROMO_RE.search(c["nome"])}

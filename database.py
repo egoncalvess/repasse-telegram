@@ -552,11 +552,12 @@ def menores_precos_do_dia(limit: int = 50, chave: str = None):
             FROM precos WHERE visto_em >= date('now', 'localtime', '-90 days')
             GROUP BY chave, dia),
         -- menor preço de hoje e o preço "de" da loja na mesma observação (SQLite: coluna nua acompanha o MIN)
-        hoje AS (SELECT chave, MIN(preco) AS preco, preco_original FROM precos
+        hoje AS (SELECT chave, MIN(preco) AS preco, preco_original, origem FROM precos
                  WHERE visto_em >= date('now', 'localtime') GROUP BY chave),
         antes AS (SELECT chave, MIN(preco) AS minimo, AVG(preco) AS media, COUNT(*) AS dias
                   FROM diario WHERE dia < date('now', 'localtime') GROUP BY chave)
-        SELECT p.*, h.preco AS preco_hoje, h.preco_original, a.minimo, a.media, COALESCE(a.dias, 0) AS dias
+        SELECT p.*, h.preco AS preco_hoje, h.preco_original, h.origem, a.minimo, a.media, COALESCE(a.dias, 0) AS dias,
+               (SELECT MAX(visto_em) FROM precos x WHERE x.chave = p.chave) AS visto_por_ultimo
         FROM hoje h JOIN produtos p USING (chave) LEFT JOIN antes a USING (chave)
         {"WHERE p.chave = ?" if chave else ""}
         ORDER BY a.media IS NULL, (a.media - h.preco) / a.media DESC
@@ -815,3 +816,45 @@ def na_fila(chave: str, horas: int = 24) -> bool:
     """, (chave, f"-{int(horas)} hours")).fetchone()
     conn.close()
     return row is not None
+
+
+# ── Interface: histórico, descarte e resumo do dia ────────────────────────────
+
+def historico_precos(chave: str, dias: int = 90) -> list[tuple[str, float]]:
+    """Menor preço de cada dia nos últimos X dias: [(YYYY-MM-DD, preço)]."""
+    conn = get_conn()
+    rows = conn.execute("""
+        SELECT date(visto_em) AS dia, MIN(preco) AS preco FROM precos
+        WHERE chave=? AND visto_em >= date('now', 'localtime', ?) GROUP BY dia ORDER BY dia
+    """, (chave, f"-{int(dias)} days")).fetchall()
+    conn.close()
+    return [(r["dia"], r["preco"]) for r in rows]
+
+
+def descartar(chave: str):
+    """Tira a oferta das listas e do piloto por 24 h (registro na fila como descartada)."""
+    conn = get_conn()
+    conn.execute("UPDATE fila_publicacao SET status='descartada' WHERE chave=? AND status='pendente'", (chave,))
+    conn.execute("INSERT INTO fila_publicacao (chave, status, criado_em) "
+                 "VALUES (?, 'descartada', datetime('now', 'localtime'))", (chave,))
+    conn.commit()
+    conn.close()
+
+
+def descartados(horas: int = 24) -> set:
+    conn = get_conn()
+    rows = conn.execute("SELECT DISTINCT chave FROM fila_publicacao WHERE status='descartada' "
+                        "AND criado_em >= datetime('now', 'localtime', ?)", (f"-{int(horas)} hours",)).fetchall()
+    conn.close()
+    return {r["chave"] for r in rows}
+
+
+def falhas_hoje() -> int:
+    """Publicações e repasses que falharam hoje."""
+    conn = get_conn()
+    pub = conn.execute("SELECT COUNT(*) FROM publicacoes WHERE status='falha' AND data >= date('now', 'localtime')"
+                       ).fetchone()[0]
+    rep = conn.execute("SELECT COUNT(*) FROM historico WHERE status IN ('Falha', 'Falha ao iniciar') AND data LIKE ?",
+                       (datetime.now().strftime("%d/%m/%Y") + "%",)).fetchone()[0]
+    conn.close()
+    return pub + rep

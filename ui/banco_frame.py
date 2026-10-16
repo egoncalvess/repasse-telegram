@@ -1,21 +1,22 @@
 """
 Visualizador do banco local (somente leitura). Colunas com segredos aparecem mascaradas.
+Aberto por Configurações → Dados.
 """
 import re
 import sqlite3
+
 import customtkinter as ctk
-from tkinter import ttk
 
-from database import DB_PATH
+import database as db
+from ui import estilo as e
 
-BTN_GRAY = ("#64748b", "#4b5563")
 LIMITE = 500
 SEGREDO = re.compile(r"hash|token|secret|session|senha|password|cookie", re.IGNORECASE)
 
 
 def _conectar():
     # mode=ro: impossível alterar o banco por esta tela
-    return sqlite3.connect(f"file:{DB_PATH.resolve().as_posix()}?mode=ro", uri=True)
+    return sqlite3.connect(f"file:{db.DB_PATH.resolve().as_posix()}?mode=ro", uri=True)
 
 
 def _mascarar(tabela: str, colunas: list[str], linha: tuple) -> list:
@@ -29,62 +30,44 @@ def _mascarar(tabela: str, colunas: list[str], linha: tuple) -> list:
 
 
 class BancoFrame(ctk.CTkFrame):
-    def __init__(self, parent):
-        super().__init__(parent, corner_radius=0, fg_color=("#f4f6fb", "#0f1115"))
-        self._build()
+    def __init__(self, parent, app=None):
+        super().__init__(parent, corner_radius=0, fg_color=e.FUNDO)
+        self._app = app
+        acoes = e.cabecalho(self, "Banco de dados")
+        e.acao(acoes, e.botao_texto(acoes, "Voltar para Configurações",
+                                    lambda: app.show_frame("configuracoes") if app else None))
+        e.acao(acoes, e.botao(acoes, "Atualizar", self.refresh))
 
-    def _build(self):
-        hdr = ctk.CTkFrame(self, fg_color=("#ffffff", "#181b22"), corner_radius=12)
-        hdr.pack(fill="x", padx=16, pady=(16, 8))
-        ctk.CTkLabel(hdr, text="Banco de Dados", font=("Segoe UI", 18, "bold")).pack(side="left", padx=16, pady=14)
-        self._tabela = ctk.StringVar()
-        self._menu = ctk.CTkOptionMenu(hdr, variable=self._tabela, values=[""], width=220,
-                                       command=lambda _: self._carregar())
-        self._menu.pack(side="left", padx=8)
-        self._busca = ctk.CTkEntry(hdr, width=200, placeholder_text="Filtrar (qualquer coluna)")
-        self._busca.pack(side="left", padx=8)
+        filtros = ctk.CTkFrame(self, fg_color="transparent")
+        filtros.pack(fill="x", padx=e.MARGEM, pady=(0, e.E2))
+        self._tabela_nome = ctk.StringVar()
+        self._menu = e.menu(filtros, self._tabela_nome, [""], lambda _: self._carregar(), largura=220)
+        self._menu.pack(side="left")
+        self._busca = e.entrada(filtros, 220, placeholder_text="Filtrar (qualquer coluna)")
+        self._busca.pack(side="left", padx=(e.E1, 0))
         self._busca.bind("<Return>", lambda _: self._carregar())
-        ctk.CTkButton(hdr, text="↻ Atualizar", width=110, command=self.refresh,
-                      fg_color=BTN_GRAY[0], hover_color=BTN_GRAY[1]).pack(side="right", padx=12)
-        self._info = ctk.CTkLabel(hdr, text="", font=("Segoe UI", 12), text_color=("#64748b", "#94a3b8"))
-        self._info.pack(side="right", padx=8)
+        self._info = e.rotulo(filtros, "", e.F_LEGENDA, secundario=True)
+        self._info.pack(side="right")
 
-        card = ctk.CTkFrame(self, fg_color=("#ffffff", "#181b22"), corner_radius=12)
-        card.pack(fill="both", expand=True, padx=16, pady=8)
-        self._tree = ttk.Treeview(card, show="headings", style="Banco.Treeview")
-        ys = ttk.Scrollbar(card, orient="vertical", command=self._tree.yview)
-        xs = ttk.Scrollbar(card, orient="horizontal", command=self._tree.xview)
-        self._tree.configure(yscrollcommand=ys.set, xscrollcommand=xs.set)
-        ys.pack(side="right", fill="y", pady=8)
-        xs.pack(side="bottom", fill="x", padx=8)
-        self._tree.pack(fill="both", expand=True, padx=(8, 0), pady=(8, 0))
-
-        ctk.CTkLabel(self, text=f"Somente leitura · mostra até {LIMITE} linhas (mais recentes primeiro) · "
-                                f"colunas de senha/token aparecem mascaradas",
-                     font=("Segoe UI", 11), text_color=("#64748b", "#94a3b8")).pack(anchor="w", padx=20, pady=(0, 10))
-
-    def _estilo(self):
-        escuro = ctk.get_appearance_mode() == "Dark"
-        fundo, texto, cab = ("#1e1e1e", "#e5e7eb", "#1e293b") if escuro else ("white", "#111827", "#e2e8f2")
-        st = ttk.Style()
-        st.theme_use("clam")
-        st.configure("Banco.Treeview", background=fundo, fieldbackground=fundo, foreground=texto,
-                     rowheight=24, font=("Segoe UI", 10), borderwidth=0)
-        st.configure("Banco.Treeview.Heading", background=cab, foreground=texto, font=("Segoe UI", 10, "bold"))
-        st.map("Banco.Treeview", background=[("selected", "#1a6fd4")])
+        e.rotulo(self, f"Somente leitura. Mostra até {LIMITE} linhas, as mais recentes primeiro; colunas de senha e "
+                       "token aparecem mascaradas.", e.F_LEGENDA, secundario=True).pack(side="bottom", anchor="w",
+                                                                                         padx=e.MARGEM, pady=e.E2)
+        self._lista = ctk.CTkFrame(self, fg_color="transparent")
+        self._lista.pack(fill="both", expand=True, padx=e.MARGEM)
+        self._tabela = None
+        self._colunas: list[str] = []
 
     def refresh(self):
-        self._estilo()
         with _conectar() as conn:
             tabelas = [r[0] for r in conn.execute(
                 "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name")]
         self._menu.configure(values=tabelas)
-        if self._tabela.get() not in tabelas:
-            self._tabela.set("produtos" if "produtos" in tabelas else tabelas[0])
+        if self._tabela_nome.get() not in tabelas:
+            self._tabela_nome.set("produtos" if "produtos" in tabelas else tabelas[0])
         self._carregar()
 
     def _carregar(self):
-        tabela = self._tabela.get()
+        tabela = self._tabela_nome.get()
         filtro = self._busca.get().strip()
         with _conectar() as conn:
             colunas = [r[1] for r in conn.execute(f'PRAGMA table_info("{tabela}")')]
@@ -96,11 +79,11 @@ class BancoFrame(ctk.CTkFrame):
             linhas = conn.execute(f'SELECT * FROM "{tabela}"{where} ORDER BY rowid DESC LIMIT {LIMITE}',
                                   params).fetchall()
 
-        self._tree.delete(*self._tree.get_children())
-        self._tree["columns"] = colunas
-        for c in colunas:
-            self._tree.heading(c, text=c, anchor="w")
-            self._tree.column(c, width=max(80, min(320, len(c) * 12)), anchor="w", stretch=False)
-        for linha in linhas:
-            self._tree.insert("", "end", values=_mascarar(tabela, colunas, linha))
+        if colunas != self._colunas:  # outra tabela: colunas novas (largura fixa, com rolagem horizontal)
+            if self._tabela is not None:
+                self._tabela.destroy()
+            self._tabela = e.Tabela(self._lista, [(c, c, max(96, min(320, len(c) * 12))) for c in colunas], fixa=True)
+            self._tabela.pack(fill="both", expand=True)
+            self._colunas = colunas
+        self._tabela.carregar([_mascarar(tabela, colunas, linha) for linha in linhas])
         self._info.configure(text=f"{len(linhas)} de {total} linhas" + (f" (filtro: {filtro})" if filtro else ""))

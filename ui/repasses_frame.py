@@ -1,51 +1,75 @@
-"""Tela de repasses: lista em tabela rápida, ativar/pausar, editar, relatório."""
 import customtkinter as ctk
 from tkinter import messagebox
+
 import database as db
 from telegram_manager import telegram_manager
-from ui.estilo import Tabela, botao, cabecalho, card, FUNDO, F_PEQUENA, TEXTO_SEC, VERMELHO
+from ui import estilo as e
 
 
 class RepassesFrame(ctk.CTkFrame):
     def __init__(self, parent):
-        super().__init__(parent, corner_radius=0, fg_color=FUNDO)
-        acoes = cabecalho(self, "Repasses", "Várias origens → seus grupos/canais, com sua afiliação")
-        botao(acoes, "+ Novo", self._add, "azul", 100).pack(side="left", padx=4)
-        botao(acoes, "Editar", self._edit, "cinza", 90).pack(side="left", padx=4)
-        botao(acoes, "Ativar/Pausar", self._toggle, "cinza", 120).pack(side="left", padx=4)
-        botao(acoes, "Relatório", self._report, "cinza", 100).pack(side="left", padx=4)
-        botao(acoes, "Remover", self._remove, "vermelho", 100).pack(side="left", padx=4)
+        super().__init__(parent, corner_radius=0, fg_color=e.FUNDO)
+        acoes = e.cabecalho(self, "Repasses")
+        e.acao(acoes, e.botao_texto(acoes, "Remover", self._remove, perigo=True))
+        e.acao(acoes, e.botao(acoes, "Relatório", self._report))
+        self._btn_pausar = e.acao(acoes, e.botao(acoes, "Pausar", self._toggle, largura=96))
+        e.acao(acoes, e.botao(acoes, "Editar", self._edit))
+        e.acao(acoes, e.botao_primario(acoes, "Novo repasse", self._add))
 
         # Sem bot, as mensagens saem pela conta de usuário (comportamento antigo): recomenda configurar o bot
-        self._aviso_bot = ctk.CTkLabel(self, text="", font=F_PEQUENA, text_color=VERMELHO, justify="left",
-                                       wraplength=760)
-        self._aviso_bot.pack(anchor="w", padx=24, pady=(0, 6))
+        self._aviso_bot = ctk.CTkFrame(self, fg_color="transparent")
+        e.rotulo(self._aviso_bot, "Sem bot configurado: os repasses são enviados pela sua conta.",
+                 e.F_LEGENDA, secundario=True).pack(side="left")
+        e.botao_texto(self._aviso_bot, "Configurar o bot", self._ir_bot).pack(side="left", padx=(e.E1, 0))
 
-        c = card(self, fill="both", expand=True)
-        self._tabela = Tabela(c, [("status", "Status", 2), ("nome", "Nome", 4), ("origens", "Origens", 6),
-                                  ("destinos", "Destinos", 5), ("total", "Enviados", 2)], altura=14)
-        self._tabela.pack(fill="both", expand=True, padx=10, pady=10)
-        self._tabela.tree.bind("<Double-1>", lambda _: self._edit())
-        ctk.CTkLabel(self, text="Dica: duplo clique para editar.", font=F_PEQUENA,
-                     text_color=TEXTO_SEC).pack(anchor="w", padx=24, pady=(0, 10))
+        lista = ctk.CTkFrame(self, fg_color="transparent")
+        lista.pack(fill="both", expand=True, padx=e.MARGEM, pady=(0, e.E3))
+        self._lista = lista
+        self._tabela = e.Tabela(lista, [("status", "Status", 2, {"tipo": "status", "min": 104}), ("nome", "Nome", 4),
+                                        ("origens", "Origens", 6), ("destinos", "Destinos", 5),
+                                        ("total", "Enviados", 2, {"alinhar": "e", "min": 80})])
+        self._tabela.ao_duplo_clique(lambda _: self._edit())
+        self._tabela.ao_selecionar(lambda _: self._atualizar_botoes())
+        self._vazio = e.estado_vazio(lista, "Nenhum repasse ainda. Crie um para levar ofertas de outros canais para "
+                                            "os seus.", "Novo repasse", self._add)
+        self._ativos: dict[str, int] = {}
 
     def refresh(self):
-        self._aviso_bot.configure(text="" if (db.get_config("bot_token") or "").strip() else
-                                  "Sem bot configurado: os repasses são enviados pela sua conta. Configure o bot em "
-                                  "Configurações → Bot para publicar pela API oficial e deixar a conta só lendo.")
+        if (db.get_config("bot_token") or "").strip():
+            self._aviso_bot.pack_forget()
+        else:
+            self._aviso_bot.pack(anchor="w", padx=e.MARGEM, pady=(0, e.E2), before=self._lista)
         linhas, ids = [], []
+        self._ativos = {}
         for r in db.listar_repasses():
             origens = [o["origem_nome"] for o in db.listar_origens(r["id"])]
             destinos = [d["grupo_nome"] for d in db.listar_destinos(r["id"])]
-            linhas.append(("🟢 Ativo" if r["ativo"] else "⏸ Pausado", r["descricao"],
-                           _resumo(origens), _resumo(destinos) or "— só radar (sem destino)", r["total"]))
+            linhas.append((("ok", "Ativo") if r["ativo"] else ("inativo", "Pausado"), r["descricao"],
+                           _resumo(origens), _resumo(destinos) or ("Só radar, sem destino", "secundario"), r["total"]))
             ids.append(str(r["id"]))
-        self._tabela.carregar(linhas, ids)
+            self._ativos[str(r["id"])] = r["ativo"]
+        if ids:
+            self._vazio.pack_forget()
+            self._tabela.pack(fill="both", expand=True)
+            self._tabela.carregar(linhas, ids)
+        else:
+            self._tabela.pack_forget()
+            self._vazio.pack(anchor="w")
+        self._atualizar_botoes()
+
+    def _atualizar_botoes(self):
+        rid = self._tabela.selecionado()
+        self._btn_pausar.configure(text="Ativar" if rid and not self._ativos.get(rid) else "Pausar")
+
+    def _ir_bot(self):
+        app = self.winfo_toplevel()
+        if hasattr(app, "show_frame"):
+            app.show_frame("configuracoes")
 
     def _sel(self):
         rid = self._tabela.selecionado()
         if not rid:
-            messagebox.showwarning("Aviso", "Selecione um repasse na lista.")
+            messagebox.showinfo("Repasses", "Selecione um repasse na lista.", parent=self)
         return int(rid) if rid else None
 
     def _toggle(self):
@@ -74,13 +98,16 @@ class RepassesFrame(ctk.CTkFrame):
 
     def _remove(self):
         rid = self._sel()
-        if rid and messagebox.askyesno("Confirmar", "Remover este repasse?"):
-            r = db.get_repasse(rid)
-            if r:
-                telegram_manager.parar_repasse(rid, r["conta_id"])
+        if not rid:
+            return
+        r = db.get_repasse(rid)
+        if not r:
+            return self.refresh()
+        if messagebox.askyesno("Remover repasse", f"Remover o repasse \"{r['descricao']}\"? Ele para na hora.",
+                               parent=self):
+            telegram_manager.parar_repasse(rid, r["conta_id"])
             db.remover_repasse(rid)
-            if r:
-                telegram_manager.atualizar_radar(r["conta_id"])
+            telegram_manager.atualizar_radar(r["conta_id"])
             self.refresh()
 
     def _report(self):
@@ -95,26 +122,26 @@ def _resumo(nomes: list[str]) -> str:
     return ", ".join(n[:25] for n in nomes[:2]) + (f" +{len(nomes) - 2}" if len(nomes) > 2 else "")
 
 
+ESTADO_HISTORICO = {"Sucesso": "ok", "Falha": "falha", "Falha ao iniciar": "falha", "Erro Afiliados": "falha"}
+
+
 class ReportDialog(ctk.CTkToplevel):
     def __init__(self, parent, repasse_id: int):
         super().__init__(parent)
         self._rid = repasse_id
         r = db.get_repasse(repasse_id)
-        self.title(f"Relatório — {r['descricao'] if r else repasse_id}")
-        self.geometry("900x500")
-        self.minsize(600, 360)
-        self.configure(fg_color=FUNDO)
-        self.transient(parent)
-        acoes = cabecalho(self, "Relatório do repasse", r["descricao"] if r else "")
-        botao(acoes, "↻ Atualizar", self._load, "cinza", 110).pack()
-        c = card(self, fill="both", expand=True)
-        self._tabela = Tabela(c, [("data", "Data", 3), ("destino", "Destino/origem", 4),
-                                  ("status", "Status", 2), ("det", "Detalhes", 9)], altura=14)
-        self._tabela.pack(fill="both", expand=True, padx=10, pady=10)
+        e.janela(self, f"Relatório: {r['descricao'] if r else repasse_id}", 900, 520, parent)
+        topo = ctk.CTkFrame(self, fg_color="transparent")
+        topo.pack(fill="x", padx=e.E3, pady=(e.E3, e.E2))
+        e.rotulo(topo, r["descricao"] if r else "Relatório", e.F_SECAO).pack(side="left")
+        e.botao_texto(topo, "Atualizar", self._load).pack(side="right")
+        self._tabela = e.Tabela(self, [("data", "Data", 3, {"min": 144}), ("destino", "Destino ou origem", 4),
+                                       ("status", "Status", 3, {"tipo": "status", "min": 120}), ("det", "Detalhes", 9)],
+                                fundo=e.SUPERFICIE)
+        self._tabela.pack(fill="both", expand=True, padx=e.E3, pady=(0, e.E3))
         self._load()
 
     def _load(self):
-        icone = {"Sucesso": "✅", "Falha": "❌", "Ignorada": "⏭", "Falha ao iniciar": "⚠️"}
-        self._tabela.carregar([(h["data"] or "-", h["destino"] or "-",
-                                f"{icone.get(h['status'], '•')} {h['status']}", h["detalhes"] or "")
+        self._tabela.carregar([(h["data"] or "—", h["destino"] or "—",
+                                (ESTADO_HISTORICO.get(h["status"], "inativo"), h["status"]), h["detalhes"] or "")
                                for h in db.listar_historico(self._rid)])

@@ -47,6 +47,10 @@ def main():
 
     import customtkinter as ctk
 
+    # IBM Plex Sans registrada antes de criar a janela (cai para Segoe UI se faltar)
+    from ui import fontes
+    fontes.registrar()
+
     # Tema salvo
     theme = db.get_config("theme", "dark")
     ctk.set_appearance_mode(theme)

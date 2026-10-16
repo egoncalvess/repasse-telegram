@@ -1,180 +1,114 @@
 import customtkinter as ctk
 from tkinter import messagebox
+
 import database as db
 from telegram_manager import telegram_manager
-
-BTN_GREEN  = ("#27ae60", "#1e8449")
-BTN_RED    = ("#e74c3c", "#c0392b")
-BTN_BLUE   = ("#1a6fd4", "#1558ab")
-ROW_SEL    = ("#dbeafe", "#1e3a5f")
-HDR_BG     = ("#e2e8f2", "#1e293b")
+from ui import estilo as e
 
 
 class ContasFrame(ctk.CTkFrame):
     def __init__(self, parent):
-        super().__init__(parent, corner_radius=0, fg_color=("#f4f6fb", "#0f1115"))
-        self._selected: int | None = None
-        self._rows: dict = {}
-        self._build()
+        super().__init__(parent, corner_radius=0, fg_color=e.FUNDO)
+        acoes = e.cabecalho(self, "Contas")
+        e.acao(acoes, e.botao_texto(acoes, "Remover", self._remove_conta, perigo=True))
+        e.acao(acoes, e.botao(acoes, "Desconectar", self._disconnect))
+        e.acao(acoes, e.botao(acoes, "Conectar", self._connect))
+        e.acao(acoes, e.botao_primario(acoes, "Adicionar conta", self._add_conta))
 
-    # ── Layout ───────────────────────────────────────────────────────────────
-
-    def _build(self):
-        # Header
-        hdr = ctk.CTkFrame(self, fg_color=("#ffffff", "#181b22"), corner_radius=12)
-        hdr.pack(fill="x", padx=16, pady=(16, 8))
-
-        ctk.CTkLabel(hdr, text="Gerenciar Contas",
-                     font=("Segoe UI", 18, "bold")).pack(side="left", padx=16, pady=14)
-
-        btn_bar = ctk.CTkFrame(hdr, fg_color="transparent")
-        btn_bar.pack(side="right", padx=12, pady=10)
-
-        _btn(btn_bar, "+ Adicionar",  self._add_conta,    BTN_BLUE).pack(side="left", padx=4)
-        _btn(btn_bar, "Remover",      self._remove_conta,  BTN_RED).pack(side="left", padx=4)
-        _btn(btn_bar, "Conectar",     self._connect,       BTN_GREEN).pack(side="left", padx=4)
-        _btn(btn_bar, "Desconectar",  self._disconnect,    BTN_RED).pack(side="left", padx=4)
-        _btn(btn_bar, "↻ Atualizar",  self.refresh,        BTN_BLUE, width=90).pack(side="left", padx=4)
-
-        # Table
-        card = ctk.CTkFrame(self, fg_color=("#ffffff", "#181b22"), corner_radius=12)
-        card.pack(fill="both", expand=True, padx=16, pady=8)
-
-        cols = [("Cód.", 55), ("Tipo", 70), ("Telefone", 160), ("Apelido", 160), ("Status", 130)]
-        hrow = ctk.CTkFrame(card, fg_color=HDR_BG, corner_radius=8)
-        hrow.pack(fill="x", padx=8, pady=(8, 0))
-        for col, w in cols:
-            ctk.CTkLabel(hrow, text=col, font=("Segoe UI", 12, "bold"),
-                         width=w, anchor="w").pack(side="left", padx=8, pady=8)
-
-        self._list = ctk.CTkScrollableFrame(card, fg_color="transparent")
-        self._list.pack(fill="both", expand=True, padx=8, pady=6)
-
-        self.refresh()
+        e.paragrafo(self, "Com o bot configurado, a conta só lê os canais onde o bot não pode entrar; quem publica "
+                          "é o bot.", padx=e.MARGEM, pady=(0, e.E2))
+        lista = ctk.CTkFrame(self, fg_color="transparent")
+        lista.pack(fill="both", expand=True, padx=e.MARGEM, pady=(0, e.E3))
+        self._tabela = e.Tabela(lista, [("telefone", "Telefone", 4), ("apelido", "Apelido", 4),
+                                        ("status", "Status", 3, {"tipo": "status", "min": 128})])
+        self._vazio = e.estado_vazio(lista, "Nenhuma conta ainda. Adicione uma conta do Telegram para ler canais "
+                                            "onde o bot não pode entrar.", "Adicionar conta", self._add_conta)
 
     # ── Refresh ──────────────────────────────────────────────────────────────
 
     def refresh(self):
-        for w in self._list.winfo_children():
-            w.destroy()
-        self._rows.clear()
-        for conta in db.listar_contas():
-            self._add_row(conta)
+        contas = db.listar_contas()
+        if not contas:
+            self._tabela.pack_forget()
+            self._vazio.pack(anchor="w")
+            return
+        self._vazio.pack_forget()
+        self._tabela.pack(fill="both", expand=True)
+        self._tabela.carregar([(c["telefone"], c["apelido"] or "—",
+                                ("ok", "Conectada") if c["status"] == "conectada" else
+                                ("inativo", (c["status"] or "desconectada").capitalize())) for c in contas],
+                              ids=[c["id"] for c in contas])
 
-    def _add_row(self, conta: dict):
-        row = ctk.CTkFrame(self._list, fg_color="transparent",
-                           cursor="hand2", corner_radius=6)
-        row.pack(fill="x", pady=1)
-
-        connected = conta["status"] == "conectada"
-        sc = ("#27ae60", "#2ecc71") if connected else ("#e74c3c", "#f87171")
-        tipo_label = "✈️ TG"
-        tipo_color = ("#1a6fd4", "#3b82f6")
-
-        ctk.CTkLabel(row, text=str(conta["id"]),    width=55,  anchor="w", font=("Segoe UI", 12)).pack(side="left", padx=8, pady=8)
-        ctk.CTkLabel(row, text=tipo_label,          width=70,  anchor="w", font=("Segoe UI", 12, "bold"), text_color=tipo_color).pack(side="left")
-        ctk.CTkLabel(row, text=conta["telefone"],   width=160, anchor="w", font=("Segoe UI", 12)).pack(side="left")
-        ctk.CTkLabel(row, text=conta["apelido"] or "-", width=160, anchor="w", font=("Segoe UI", 12)).pack(side="left")
-        ctk.CTkLabel(row, text="● " + conta["status"].capitalize(),
-                     width=130, anchor="w", font=("Segoe UI", 12), text_color=sc).pack(side="left")
-
-        for w in [row] + list(row.winfo_children()):
-            w.bind("<Button-1>", lambda e, cid=conta["id"]: self._select(cid))
-
-        self._rows[conta["id"]] = row
-
-    def _select(self, cid: int):
-        self._selected = cid
-        for k, r in self._rows.items():
-            r.configure(fg_color=ROW_SEL if k == cid else "transparent")
+    def _selecionada(self) -> dict | None:
+        cid = self._tabela.selecionado()
+        if not cid:
+            messagebox.showinfo("Contas", "Selecione uma conta na lista.", parent=self)
+            return None
+        return next((c for c in db.listar_contas() if c["id"] == int(cid)), None)
 
     # ── Ações ────────────────────────────────────────────────────────────────
 
     def _add_conta(self):
         AdicionarContaDialog(self)
-        self.after(200, self.refresh)
 
     def _remove_conta(self):
-        if not self._selected:
-            messagebox.showwarning("Aviso", "Selecione uma conta.")
-            return
-        conta = next((c for c in db.listar_contas() if c["id"] == self._selected), None)
-        if not conta:
-            return
-        if messagebox.askyesno("Confirmar", "Remover esta conta?"):
-            telegram_manager.desconectar_conta(self._selected)
-            db.remover_conta(self._selected)
-            self._selected = None
+        conta = self._selecionada()
+        if conta and messagebox.askyesno("Remover conta", f"Remover a conta {conta['telefone']}? Os repasses que "
+                                                          "dependem dela param de ler as origens.", parent=self):
+            telegram_manager.desconectar_conta(conta["id"])
+            db.remover_conta(conta["id"])
             self.refresh()
 
     def _connect(self):
-        if not self._selected:
-            messagebox.showwarning("Aviso", "Selecione uma conta.")
-            return
-        
-        conta = next((c for c in db.listar_contas() if c["id"] == self._selected), None)
+        conta = self._selecionada()
         if not conta:
             return
-
         try:
             telegram_manager.get_creds()
-        except ValueError as e:
-            messagebox.showerror("Configuração necessária", str(e))
+        except ValueError as ex:
+            messagebox.showerror("Conectar conta", str(ex), parent=self)
             return
 
         def cb(result, error):
             if error:
-                self.after(0, lambda: messagebox.showerror("Erro", error))
+                self.after(0, lambda: messagebox.showerror("Conectar conta", f"Não conectou: {error}", parent=self))
                 return
             if result == "needs_code":
                 self.after(0, lambda: CodigoDialog(self, conta))
             else:
                 self.after(0, self.refresh)
 
-        telegram_manager.conectar_conta(self._selected, conta["telefone"], cb)
+        telegram_manager.conectar_conta(conta["id"], conta["telefone"], cb)
 
     def _disconnect(self):
-        if not self._selected:
-            messagebox.showwarning("Aviso", "Selecione uma conta.")
-            return
-        conta = next((c for c in db.listar_contas() if c["id"] == self._selected), None)
-        if not conta:
-            return
-        telegram_manager.desconectar_conta(self._selected,
-                                           callback=lambda _: self.after(0, self.refresh))
+        conta = self._selecionada()
+        if conta:
+            telegram_manager.desconectar_conta(conta["id"], callback=lambda _: self.after(0, self.refresh))
 
 
-# ── Dialogs ───────────────────────────────────────────────────────────────────
+# ── Diálogos ──────────────────────────────────────────────────────────────────
 
 class AdicionarContaDialog(ctk.CTkToplevel):
     def __init__(self, parent):
         super().__init__(parent)
-        self.title("Adicionar Conta Telegram")
-        self.geometry("380x260")
-        self.grab_set()
+        self._parent = parent
+        e.janela(self, "Adicionar conta", 420, 340, parent)
         self.resizable(False, False)
-
-        ctk.CTkLabel(self, text="Adicionar Conta Telegram",
-                     font=("Segoe UI", 15, "bold")).pack(pady=(20, 15))
-
-        ctk.CTkLabel(self, text="Telefone com DDD (Ex: +5511999999999)").pack()
-        self._phone = ctk.CTkEntry(self, width=300, placeholder_text="+55 11 99999-9999")
-        self._phone.pack(pady=(4, 12))
-
-        ctk.CTkLabel(self, text="Apelido").pack()
-        self._apelido = ctk.CTkEntry(self, width=300, placeholder_text="Ex: Conta Principal")
-        self._apelido.pack(pady=(4, 18))
-
-        ctk.CTkButton(self, text="Salvar", command=self._save, width=140, fg_color=BTN_BLUE[0], hover_color=BTN_BLUE[1]).pack()
+        e.rodape_dialogo(self, "Salvar", self._save)
+        corpo = ctk.CTkFrame(self, fg_color="transparent")
+        corpo.pack(fill="both", expand=True, padx=e.E3, pady=(e.E3, 0))
+        e.rotulo(corpo, "Adicionar conta do Telegram", e.F_SECAO).pack(anchor="w", pady=(0, e.E2))
+        self._phone = e.campo(corpo, "Telefone com DDI e DDD", largura=360, dica="+5571999999999")
+        self._apelido = e.campo(corpo, "Apelido", largura=360, dica="Ex.: Conta principal")
 
     def _save(self):
         phone = self._phone.get().strip()
-        apelido = self._apelido.get().strip()
         if not phone:
-            messagebox.showwarning("Aviso", "Informe o número de telefone.", parent=self)
+            messagebox.showwarning("Adicionar conta", "Informe o telefone, com DDI e DDD.", parent=self)
             return
-        db.adicionar_conta(phone, apelido or phone, "telegram")
+        db.adicionar_conta(phone, self._apelido.get().strip() or phone, "telegram")
         self.destroy()
+        self._parent.refresh()
 
 
 class CodigoDialog(ctk.CTkToplevel):
@@ -182,43 +116,30 @@ class CodigoDialog(ctk.CTkToplevel):
         super().__init__(parent)
         self._parent = parent
         self._conta = conta
-        self.title("Verificação")
-        self.geometry("380x280")
-        self.grab_set()
+        e.janela(self, "Código de verificação", 420, 360, parent)
         self.resizable(False, False)
-
-        ctk.CTkLabel(self, text=f"Código enviado para\n{conta['telefone']}",
-                     font=("Segoe UI", 13), justify="center").pack(pady=(20, 16))
-
-        ctk.CTkLabel(self, text="Código de verificação").pack()
-        self._code = ctk.CTkEntry(self, width=300, placeholder_text="12345")
-        self._code.pack(pady=(4, 12))
-
-        ctk.CTkLabel(self, text="Senha 2FA (se houver)").pack()
-        self._pw = ctk.CTkEntry(self, width=300, show="*", placeholder_text="Deixe vazio se não tiver")
-        self._pw.pack(pady=(4, 20))
-
-        ctk.CTkButton(self, text="Confirmar", command=self._confirm, width=140).pack()
+        e.rodape_dialogo(self, "Confirmar", self._confirm)
+        corpo = ctk.CTkFrame(self, fg_color="transparent")
+        corpo.pack(fill="both", expand=True, padx=e.E3, pady=(e.E3, 0))
+        e.rotulo(corpo, "Código de verificação", e.F_SECAO).pack(anchor="w", pady=(0, e.E1))
+        e.rotulo(corpo, f"O Telegram enviou um código para {conta['telefone']}.", e.F_CORPO,
+                 secundario=True).pack(anchor="w", pady=(0, e.E2))
+        self._code = e.campo(corpo, "Código", largura=360, dica="12345")
+        self._pw = e.campo(corpo, "Senha de duas etapas (se tiver)", largura=360, oculto=True)
 
     def _confirm(self):
         code = self._code.get().strip()
-        pw   = self._pw.get().strip() or None
+        pw = self._pw.get().strip() or None
         if not code:
-            messagebox.showwarning("Aviso", "Informe o código.", parent=self)
+            messagebox.showwarning("Código de verificação", "Informe o código que o Telegram enviou.", parent=self)
             return
 
         def cb(result, error):
             if error:
-                self.after(0, lambda: messagebox.showerror("Erro", error, parent=self))
+                self.after(0, lambda: messagebox.showerror("Código de verificação", f"Não conectou: {error}",
+                                                           parent=self))
             else:
                 self.after(0, self.destroy)
                 self.after(0, self._parent.refresh)
 
         telegram_manager.confirmar_codigo(self._conta["id"], code, cb, pw)
-
-
-# ── Helper ────────────────────────────────────────────────────────────────────
-
-def _btn(parent, text, cmd, colors, width=110):
-    return ctk.CTkButton(parent, text=text, command=cmd, width=width,
-                         fg_color=colors[0], hover_color=colors[1])
