@@ -21,11 +21,13 @@ class ConfiguracoesFrame(ctk.CTkFrame):
 
         tab.add("API Telegram")
         tab.add("Bot")
+        tab.add("Mercado Livre")
         tab.add("Geral")
         tab.add("Sobre")
 
         self._build_api_tab(tab.tab("API Telegram"))
         self._build_bot_tab(tab.tab("Bot"))
+        self._build_ml_tab(tab.tab("Mercado Livre"))
         self._build_geral_tab(tab.tab("Geral"))
         self._build_sobre_tab(tab.tab("Sobre"))
 
@@ -194,6 +196,142 @@ class ConfiguracoesFrame(ctk.CTkFrame):
             self.after(0, lambda: self._bot_status.configure(text=txt))
 
         telegram_manager.iniciar_bot(cb)
+
+    # ── Mercado Livre (fonte de busca pela API oficial) ───────────────────────
+
+    def _build_ml_tab(self, parent):
+        from ui import estilo as e
+        import fontes
+
+        sc = ctk.CTkScrollableFrame(parent, fg_color=e.CARD, corner_radius=12)
+        sc.pack(fill="both", expand=True, padx=8, pady=8)
+
+        ctk.CTkLabel(sc, text="API oficial do Mercado Livre", font=e.F_SUBTITULO).pack(anchor="w", padx=20, pady=(16, 4))
+        ctk.CTkLabel(sc, text="Use o app criado no DevCenter do Mercado Livre. Em Fluxos OAuth, marque "
+                              "Authorization Code e Refresh Token; a URL de redirecionamento precisa ser igual à "
+                              "cadastrada lá.", font=e.F_PEQUENA, text_color=e.TEXTO_SEC, wraplength=620,
+                     justify="left").pack(anchor="w", padx=20)
+
+        def campo(rotulo, chave, padrao="", oculto=False):
+            ctk.CTkLabel(sc, text=rotulo, font=e.F_NORMAL).pack(anchor="w", padx=20, pady=(12, 4))
+            ent = ctk.CTkEntry(sc, width=420, show="*" if oculto else "")
+            ent.insert(0, db.get_config(chave) or padrao)
+            ent.pack(anchor="w", padx=20)
+            return ent
+
+        from fontes.mercadolivre import REDIRECT_PADRAO
+        self._ml_cid = campo("Client ID", "ml_client_id")
+        self._ml_sec = campo("Client Secret", "ml_client_secret", oculto=True)
+        self._ml_redirect = campo("URL de redirecionamento", "ml_redirect_uri", REDIRECT_PADRAO)
+
+        self._ml_ativa = ctk.BooleanVar(value=fontes.ativa("ml"))
+        ctk.CTkSwitch(sc, text="Usar nas buscas automáticas", variable=self._ml_ativa, font=e.F_NORMAL,
+                      command=lambda: fontes.definir_ativa("ml", self._ml_ativa.get())).pack(anchor="w", padx=20,
+                                                                                         pady=(16, 0))
+
+        ctk.CTkLabel(sc, text="Conexão", font=e.F_SUBTITULO).pack(anchor="w", padx=20, pady=(20, 4))
+        self._ml_status = ctk.CTkLabel(sc, text="", font=e.F_NORMAL, wraplength=620, justify="left")
+        self._ml_status.pack(anchor="w", padx=20)
+        ctk.CTkLabel(sc, text="1. Conectar abre o login do Mercado Livre no navegador. Autorize com a conta dona do app.\n"
+                              "2. Copie a URL inteira da barra de endereço (ela termina com ?code=…) e cole abaixo.",
+                     font=e.F_PEQUENA, text_color=e.TEXTO_SEC, justify="left").pack(anchor="w", padx=20, pady=(8, 4))
+        linha = ctk.CTkFrame(sc, fg_color="transparent")
+        linha.pack(anchor="w", padx=20, pady=4)
+        e.botao(linha, "Conectar", self._ml_conectar, largura=120).pack(side="left")
+        self._ml_retorno = ctk.CTkEntry(linha, width=320, placeholder_text="https://www.google.com/?code=TG-…")
+        self._ml_retorno.pack(side="left", padx=8)
+        e.botao(linha, "Confirmar", self._ml_confirmar, cor="cinza", largura=110).pack(side="left")
+
+        acoes = ctk.CTkFrame(sc, fg_color="transparent")
+        acoes.pack(anchor="w", padx=20, pady=(12, 4))
+        e.botao(acoes, "Testar", self._ml_testar, cor="cinza", largura=110).pack(side="left")
+        e.botao(acoes, "Desconectar", self._ml_desconectar, cor="vermelho", largura=120).pack(side="left", padx=8)
+
+        self._ml_endpoints = ctk.CTkLabel(sc, text="", font=e.F_PEQUENA, text_color=e.TEXTO_SEC,
+                                          justify="left", wraplength=620)
+        self._ml_endpoints.pack(anchor="w", padx=20, pady=(8, 16))
+        self._ml_atualizar_status()
+
+    def _ml_fonte(self):
+        import fontes
+        return fontes.get("ml")
+
+    def _ml_salvar_credenciais(self) -> bool:
+        cid, sec = self._ml_cid.get().strip(), self._ml_sec.get().strip()
+        redirect = self._ml_redirect.get().strip()
+        if not cid or not sec:
+            messagebox.showwarning("Aviso", "Preencha Client ID e Client Secret do app do Mercado Livre.")
+            return False
+        if not redirect.startswith("https://"):
+            messagebox.showwarning("Aviso", "A URL de redirecionamento precisa começar com https://.")
+            return False
+        db.set_config("ml_client_id", cid)
+        db.set_config("ml_client_secret", sec)
+        db.set_config("ml_redirect_uri", redirect)
+        return True
+
+    def _ml_atualizar_status(self, texto: str = None):
+        import fontes
+        if texto is None:
+            pausa = fontes.pausada("ml")
+            if pausa:
+                texto = f"Pausada: {pausa}"
+            elif not self._ml_fonte().conectado():
+                texto = "Não conectado"
+            elif not db.get_config("ml_refresh_token"):
+                texto = ("Conectado por até 6 horas: o Mercado Livre não enviou refresh token. Marque Refresh Token "
+                         "nos Fluxos OAuth do app no DevCenter e conecte de novo.")
+            else:
+                texto = "Conectado"
+        self._ml_status.configure(text=texto)
+        linhas = [f"{ep}: {'ok' if s['status'] == 'ok' else 'bloqueado (' + (s['detalhe'] or '') + ')'}"
+                  for ep, s in sorted(db.endpoints_da_fonte("ml").items())]
+        self._ml_endpoints.configure(text="\n".join(linhas))
+
+    def _ml_conectar(self):
+        import webbrowser
+        if not self._ml_salvar_credenciais():
+            return
+        webbrowser.open(self._ml_fonte().url_autorizacao())
+        self._ml_atualizar_status("Aguardando a URL de retorno do navegador.")
+
+    def _em_segundo_plano(self, trabalho, ao_terminar):
+        """Rede fora da thread da interface; o resultado volta pela fila do Tk."""
+        import threading
+
+        def _rodar():
+            try:
+                res, err = trabalho(), None
+            except Exception as ex:
+                res, err = None, ex
+            self.after(0, lambda: ao_terminar(res, err))
+        threading.Thread(target=_rodar, daemon=True).start()
+
+    def _ml_confirmar(self):
+        if not self._ml_salvar_credenciais():
+            return
+        retorno = self._ml_retorno.get().strip()
+        self._ml_atualizar_status("Conectando...")
+
+        def _fim(_, err):
+            self._ml_retorno.delete(0, "end")
+            if err:
+                self._ml_atualizar_status(f"Não conectou: {err}")
+            else:
+                self._ml_testar()
+        self._em_segundo_plano(lambda: self._ml_fonte().conectar(retorno), _fim)
+
+    def _ml_testar(self):
+        self._ml_atualizar_status("Testando cada endpoint (uma chamada por endpoint)...")
+
+        def _fim(res, err):
+            self._ml_atualizar_status(f"Falha no teste: {err}" if err else res["mensagem"])
+        self._em_segundo_plano(lambda: self._ml_fonte().testar(), _fim)
+
+    def _ml_desconectar(self):
+        if messagebox.askyesno("Desconectar", "Desconectar o Mercado Livre? As buscas pela API param até conectar de novo."):
+            self._ml_fonte().desconectar()
+            self._ml_atualizar_status()
 
     # ── Geral ─────────────────────────────────────────────────────────────────
 

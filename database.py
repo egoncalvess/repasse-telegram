@@ -111,6 +111,27 @@ def init_db():
             conta_id INTEGER
         );
 
+        -- Cada requisição das fontes de busca (pasta fontes/): auditoria de limite e saúde, expurgo em 30 dias
+        CREATE TABLE IF NOT EXISTS api_chamadas (
+            id        INTEGER PRIMARY KEY AUTOINCREMENT,
+            fonte     TEXT    NOT NULL,
+            endpoint  TEXT    NOT NULL,       -- modelo do caminho, ex.: /products/{id}/items
+            status    INTEGER NOT NULL,       -- HTTP; 0 = sem resposta (rede/timeout)
+            ms        INTEGER NOT NULL,
+            criado_em TEXT    NOT NULL        -- YYYY-MM-DD HH:MM:SS (hora local)
+        );
+        CREATE INDEX IF NOT EXISTS idx_api_chamadas_criado ON api_chamadas(criado_em);
+
+        -- Endpoint que respondeu 401/403: fica bloqueado até um novo teste manual da fonte
+        CREATE TABLE IF NOT EXISTS fonte_endpoints (
+            fonte_id      TEXT NOT NULL,
+            endpoint      TEXT NOT NULL,
+            status        TEXT NOT NULL,      -- ok | bloqueado
+            detalhe       TEXT,
+            atualizado_em TEXT NOT NULL,
+            PRIMARY KEY (fonte_id, endpoint)
+        );
+
         CREATE TABLE IF NOT EXISTS ofertas_vistas (
             chave    TEXT PRIMARY KEY,
             visto_em TEXT NOT NULL
@@ -550,5 +571,49 @@ def marcar_ofertas(chaves):
     conn.executemany("INSERT OR REPLACE INTO ofertas_vistas (chave, visto_em) VALUES (?, datetime('now', 'localtime'))",
                      [(c,) for c in chaves])
     conn.execute("DELETE FROM ofertas_vistas WHERE visto_em < datetime('now', 'localtime', '-30 days')")
+    conn.commit()
+    conn.close()
+
+
+# ── Fontes de busca (pasta fontes/) ───────────────────────────────────────────
+
+def registrar_chamada_api(fonte: str, endpoint: str, status: int, ms: int):
+    conn = get_conn()
+    conn.execute("INSERT INTO api_chamadas (fonte, endpoint, status, ms, criado_em) "
+                 "VALUES (?, ?, ?, ?, datetime('now', 'localtime'))", (fonte, endpoint, status, ms))
+    conn.execute("DELETE FROM api_chamadas WHERE criado_em < datetime('now', 'localtime', '-30 days')")
+    conn.commit()
+    conn.close()
+
+
+def contar_chamadas_api(fonte: str, minutos: int = 60) -> int:
+    conn = get_conn()
+    n = conn.execute("SELECT COUNT(*) FROM api_chamadas WHERE fonte=? AND criado_em >= datetime('now', 'localtime', ?)",
+                     (fonte, f"-{int(minutos)} minutes")).fetchone()[0]
+    conn.close()
+    return n
+
+
+def marcar_endpoint(fonte_id: str, endpoint: str, status: str, detalhe: str = ""):
+    conn = get_conn()
+    conn.execute("INSERT OR REPLACE INTO fonte_endpoints (fonte_id, endpoint, status, detalhe, atualizado_em) "
+                 "VALUES (?, ?, ?, ?, datetime('now', 'localtime'))", (fonte_id, endpoint, status, detalhe))
+    conn.commit()
+    conn.close()
+
+
+def endpoints_da_fonte(fonte_id: str) -> dict:
+    """{endpoint: {status, detalhe, atualizado_em}} do último resultado conhecido."""
+    conn = get_conn()
+    rows = conn.execute("SELECT endpoint, status, detalhe, atualizado_em FROM fonte_endpoints WHERE fonte_id=?",
+                        (fonte_id,)).fetchall()
+    conn.close()
+    return {r["endpoint"]: dict(r) for r in rows}
+
+
+def liberar_endpoints(fonte_id: str):
+    """Teste manual: endpoints bloqueados voltam a ser tentados (uma vez) pelo próprio teste."""
+    conn = get_conn()
+    conn.execute("DELETE FROM fonte_endpoints WHERE fonte_id=? AND status='bloqueado'", (fonte_id,))
     conn.commit()
     conn.close()

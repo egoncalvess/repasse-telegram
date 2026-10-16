@@ -1,0 +1,11 @@
+{
+  "keywords": "notebook",
+  "paging": {"total": 2, "offset": 0, "limit": 2},
+  "query_type": "PRODUCT_NAME",
+  "results": [
+    {"id": "MLB21278806", "name": "Mouse Sem Fio Exemplo M170", "domain_id": "MLB-COMPUTER_MICE",
+     "pictures": [{"id": "1", "url": "http://http2.mlstatic.com/D_exemplo_1.jpg"}]},
+    {"id": "MLB99999999", "name": "Produto Sem Anuncio Ativo", "domain_id": "MLB-NOTEBOOKS",
+     "pictures": []}
+  ]
+}
