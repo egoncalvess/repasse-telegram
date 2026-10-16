@@ -1,0 +1,4 @@
+customtkinter==5.2.2
+telethon==1.43.2
+Pillow==12.2.0
+requests==2.34.2

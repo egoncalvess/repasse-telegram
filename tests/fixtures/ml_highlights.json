@@ -1,0 +1,7 @@
+{
+  "query_data": {"highlight_type": "BEST_SELLER", "criteria": "CATEGORY", "id": "MLB1648"},
+  "content": [
+    {"id": "MLB21278806", "position": 1, "type": "PRODUCT"},
+    {"id": "MLB4964975723", "position": 2, "type": "ITEM"}
+  ]
+}
