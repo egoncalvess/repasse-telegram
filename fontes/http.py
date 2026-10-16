@@ -57,6 +57,17 @@ class ClienteHTTP:
     def post(self, url, endpoint, data=None, headers=None):
         return self.requisitar("POST", url, endpoint, data=data, headers=headers)
 
+    def baixar(self, url, endpoint="/imagem", max_bytes=5_000_000) -> bytes | None:
+        """Arquivo binário (foto do produto). Uma tentativa só; falha devolve None e a busca segue sem foto."""
+        if not url or fontes.pausada(self.fonte.id):
+            return None
+        if self.fonte.tipo == "scraping" and not self._robots_permite(url):
+            return None
+        resp, status, _ = self._enviar("GET", url, endpoint, None, None, {"User-Agent": USER_AGENT})
+        if resp is None or status != 200 or not resp.headers.get("Content-Type", "").startswith("image/"):
+            return None
+        return resp.content if len(resp.content) <= max_bytes else None
+
     def limpar_cache(self):
         self._cache.clear()
 

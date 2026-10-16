@@ -122,6 +122,33 @@ def init_db():
         );
         CREATE INDEX IF NOT EXISTS idx_api_chamadas_criado ON api_chamadas(criado_em);
 
+        -- Buscas automáticas nas fontes (buscador.py): o que procurar, a cada quanto e as regras de publicação
+        CREATE TABLE IF NOT EXISTS buscas (
+            id               INTEGER PRIMARY KEY AUTOINCREMENT,
+            fonte_id         TEXT    NOT NULL,       -- id em fontes.registro() ("ml")
+            nome             TEXT    NOT NULL,
+            tipo             TEXT    NOT NULL,       -- categoria | termo | produto
+            valor            TEXT    NOT NULL,
+            intervalo_min    INTEGER NOT NULL DEFAULT 60,
+            desconto_min_pct REAL    DEFAULT 0,      -- 0 = sem exigência
+            preco_max        REAL    DEFAULT 0,      -- 0 = sem teto
+            so_frete_gratis  INTEGER DEFAULT 0,
+            ativo            INTEGER DEFAULT 1,
+            ultima_execucao  TEXT,                   -- YYYY-MM-DD HH:MM:SS (hora local)
+            ultimo_status    TEXT
+        );
+
+        -- Último resultado de cada produto em cada busca: o piloto aplica as regras da busca que o achou
+        CREATE TABLE IF NOT EXISTS busca_resultados (
+            busca_id       INTEGER NOT NULL,
+            chave          TEXT    NOT NULL,
+            preco          REAL    NOT NULL,
+            preco_original REAL,
+            frete_gratis   INTEGER DEFAULT 0,
+            visto_em       TEXT    NOT NULL,
+            PRIMARY KEY (busca_id, chave)
+        );
+
         -- Endpoint que respondeu 401/403: fica bloqueado até um novo teste manual da fonte
         CREATE TABLE IF NOT EXISTS fonte_endpoints (
             fonte_id      TEXT NOT NULL,
@@ -172,6 +199,12 @@ def init_db():
     # Migração automática de banco para adicionar coluna 'cookie' caso não exista
     try:
         conn.execute("ALTER TABLE integracoes ADD COLUMN cookie TEXT DEFAULT ''")
+        conn.commit()
+    except sqlite3.OperationalError:
+        pass
+    # Migração: preço "de" informado pela loja (fontes de busca); NULL nos preços vindos de canais
+    try:
+        conn.execute("ALTER TABLE precos ADD COLUMN preco_original REAL")
         conn.commit()
     except sqlite3.OperationalError:
         pass
@@ -468,9 +501,10 @@ def set_config(chave: str, valor: str):
 # ── Radar de preços ───────────────────────────────────────────────────────────
 
 def registrar_preco(chave: str, nome: str, loja: str, url: str, preco: float, origem: str = "", imagem: str = None,
-                    visto_em: datetime = None):
+                    visto_em: datetime = None, preco_original: float = None):
     """Upsert do produto + uma observação de preço (mesmo minuto não duplica).
-    visto_em: data original da postagem (importação de histórico); padrão = agora."""
+    visto_em: data original da postagem (importação de histórico); padrão = agora.
+    preco_original: preço "de" informado pela loja (só fontes de busca; nunca inventado)."""
     agora = (visto_em or datetime.now()).strftime("%Y-%m-%d %H:%M")
     conn = get_conn()
     # Importação pode chegar fora de ordem: nome/url só são trocados por uma observação mais recente
@@ -484,8 +518,8 @@ def registrar_preco(chave: str, nome: str, loja: str, url: str, preco: float, or
             criado_em = MIN(produtos.criado_em, excluded.criado_em),
             imagem = COALESCE(produtos.imagem, excluded.imagem)
     """, (chave, nome, loja, url, imagem, agora, agora))
-    conn.execute("INSERT OR IGNORE INTO precos (chave, preco, visto_em, origem) VALUES (?, ?, ?, ?)",
-                 (chave, preco, agora, origem))
+    conn.execute("INSERT OR IGNORE INTO precos (chave, preco, visto_em, origem, preco_original) VALUES (?, ?, ?, ?, ?)",
+                 (chave, preco, agora, origem, preco_original))
     conn.execute("DELETE FROM precos WHERE visto_em < date('now', 'localtime', '-180 days')")
     conn.commit()
     conn.close()
@@ -509,10 +543,12 @@ def menores_precos_do_dia(limit: int = 50, chave: str = None):
             SELECT chave, date(visto_em) AS dia, MIN(preco) AS preco
             FROM precos WHERE visto_em >= date('now', 'localtime', '-90 days')
             GROUP BY chave, dia),
-        hoje AS (SELECT chave, preco FROM diario WHERE dia = date('now', 'localtime')),
+        -- menor preço de hoje e o preço "de" da loja na mesma observação (SQLite: coluna nua acompanha o MIN)
+        hoje AS (SELECT chave, MIN(preco) AS preco, preco_original FROM precos
+                 WHERE visto_em >= date('now', 'localtime') GROUP BY chave),
         antes AS (SELECT chave, MIN(preco) AS minimo, AVG(preco) AS media, COUNT(*) AS dias
                   FROM diario WHERE dia < date('now', 'localtime') GROUP BY chave)
-        SELECT p.*, h.preco AS preco_hoje, a.minimo, a.media, COALESCE(a.dias, 0) AS dias
+        SELECT p.*, h.preco AS preco_hoje, h.preco_original, a.minimo, a.media, COALESCE(a.dias, 0) AS dias
         FROM hoje h JOIN produtos p USING (chave) LEFT JOIN antes a USING (chave)
         {"WHERE p.chave = ?" if chave else ""}
         ORDER BY a.media IS NULL, (a.media - h.preco) / a.media DESC
@@ -617,3 +653,96 @@ def liberar_endpoints(fonte_id: str):
     conn.execute("DELETE FROM fonte_endpoints WHERE fonte_id=? AND status='bloqueado'", (fonte_id,))
     conn.commit()
     conn.close()
+
+
+# ── Buscas automáticas (buscador.py) ──────────────────────────────────────────
+
+CAMPOS_BUSCA = ("fonte_id", "nome", "tipo", "valor", "intervalo_min", "desconto_min_pct", "preco_max",
+                "so_frete_gratis", "ativo")
+
+
+def listar_buscas():
+    conn = get_conn()
+    rows = conn.execute("SELECT * FROM buscas ORDER BY nome").fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def get_busca(busca_id: int):
+    conn = get_conn()
+    row = conn.execute("SELECT * FROM buscas WHERE id=?", (busca_id,)).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def adicionar_busca(d: dict) -> int:
+    campos = [c for c in CAMPOS_BUSCA if c in d]
+    conn = get_conn()
+    cur = conn.execute(f"INSERT INTO buscas ({', '.join(campos)}) VALUES ({', '.join('?' * len(campos))})",
+                       [d[c] for c in campos])
+    conn.commit()
+    conn.close()
+    return cur.lastrowid
+
+
+def atualizar_busca(busca_id: int, d: dict):
+    campos = [c for c in CAMPOS_BUSCA if c in d]
+    if not campos:
+        return
+    conn = get_conn()
+    conn.execute(f"UPDATE buscas SET {', '.join(c + '=?' for c in campos)} WHERE id=?",
+                 [d[c] for c in campos] + [busca_id])
+    conn.commit()
+    conn.close()
+
+
+def remover_busca(busca_id: int):
+    conn = get_conn()
+    conn.execute("DELETE FROM busca_resultados WHERE busca_id=?", (busca_id,))
+    conn.execute("DELETE FROM buscas WHERE id=?", (busca_id,))
+    conn.commit()
+    conn.close()
+
+
+def buscas_vencidas():
+    """Buscas ativas cujo intervalo já passou desde a última execução (ou que nunca rodaram)."""
+    conn = get_conn()
+    rows = conn.execute("""
+        SELECT * FROM buscas WHERE ativo=1 AND (ultima_execucao IS NULL OR
+            datetime(ultima_execucao, '+' || MAX(1, intervalo_min) || ' minutes') <= datetime('now', 'localtime'))
+        ORDER BY ultima_execucao IS NOT NULL, ultima_execucao
+    """).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def marcar_execucao_busca(busca_id: int, status: str):
+    conn = get_conn()
+    conn.execute("UPDATE buscas SET ultima_execucao=datetime('now', 'localtime'), ultimo_status=? WHERE id=?",
+                 (status[:300], busca_id))
+    conn.commit()
+    conn.close()
+
+
+def registrar_resultado_busca(busca_id: int, chave: str, preco: float, preco_original: float = None,
+                              frete_gratis: bool = False):
+    conn = get_conn()
+    conn.execute("INSERT OR REPLACE INTO busca_resultados (busca_id, chave, preco, preco_original, frete_gratis, "
+                 "visto_em) VALUES (?, ?, ?, ?, ?, datetime('now', 'localtime'))",
+                 (busca_id, chave, preco, preco_original, int(bool(frete_gratis))))
+    conn.execute("DELETE FROM busca_resultados WHERE visto_em < datetime('now', 'localtime', '-30 days')")
+    conn.commit()
+    conn.close()
+
+
+def buscas_do_produto(chave: str):
+    """Buscas que acharam o produto nos últimos 2 dias, com as regras e o último resultado de cada uma."""
+    conn = get_conn()
+    rows = conn.execute("""
+        SELECT b.*, r.preco AS resultado_preco, r.preco_original AS resultado_preco_original,
+               r.frete_gratis AS resultado_frete_gratis
+        FROM busca_resultados r JOIN buscas b ON b.id = r.busca_id
+        WHERE r.chave=? AND r.visto_em >= datetime('now', 'localtime', '-2 days')
+    """, (chave,)).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]

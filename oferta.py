@@ -16,8 +16,17 @@ def brl(valor: float) -> str:
     return "R$ " + f"{valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
 
-def selo(p: dict) -> str | None:
-    """Destaque honesto, calculado só com preços realmente observados nos canais."""
+def desconto_loja(p: dict) -> int | None:
+    """% de desconto sobre o preço "de" informado pela loja; None sem preço original real maior que o atual."""
+    hoje, original = p["preco_hoje"], p.get("preco_original")
+    if original and hoje and original > hoje:
+        pct = round((1 - hoje / original) * 100)
+        return pct if pct > 0 else None
+    return None
+
+
+def selo_historico(p: dict) -> str | None:
+    """Destaque honesto, calculado só com preços realmente observados (canais e fontes de busca)."""
     hoje, minimo, media, dias = p["preco_hoje"], p.get("minimo"), p.get("media"), p.get("dias") or 0
     if dias >= DIAS_MIN_HISTORICO and hoje <= minimo:
         return f"🏆 Menor preço em {dias} dias monitorados"
@@ -26,9 +35,28 @@ def selo(p: dict) -> str | None:
     return None
 
 
+def selo(p: dict) -> str | None:
+    """Histórico real primeiro; sem ele, o desconto sobre o preço "de" real da loja."""
+    destaque = selo_historico(p)
+    if destaque:
+        return destaque
+    pct = desconto_loja(p)
+    return f"🏷️ De {brl(p['preco_original'])} por {brl(p['preco_hoje'])} (-{pct}%)" if pct else None
+
+
+def desconto_pct(p: dict) -> float:
+    """Maior desconto comprovado: sobre o preço "de" da loja ou sobre a média do histórico (3+ dias)."""
+    hoje, media, dias = p["preco_hoje"], p.get("media"), p.get("dias") or 0
+    historico = (1 - hoje / media) * 100 if dias >= 3 and media else 0
+    return max(desconto_loja(p) or 0, historico, 0)
+
+
 def formatar_oferta(p: dict, url: str) -> str:
-    linhas = [f"🔥 <b>{html.escape(p['nome'][:200])}</b>", "", f"💰 <b>{brl(p['preco_hoje'])}</b>"]
-    destaque = selo(p)
+    pct = desconto_loja(p)
+    preco = (f"💰 De <s>{brl(p['preco_original'])}</s> por <b>{brl(p['preco_hoje'])}</b> (-{pct}%)" if pct
+             else f"💰 <b>{brl(p['preco_hoje'])}</b>")
+    linhas = [f"🔥 <b>{html.escape(p['nome'][:200])}</b>", "", preco]
+    destaque = selo_historico(p)
     if destaque:
         linhas.append(destaque)
     linhas.append(f"🏪 {html.escape(p['loja'])}")

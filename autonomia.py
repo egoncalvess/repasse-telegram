@@ -70,8 +70,10 @@ async def ciclo_piloto(tm) -> str:
     if not destino:
         return "sem destino (Radar de Preços)"
 
-    candidatos = [p for p in db.menores_precos_do_dia(limit=30)
-                  if selo(p) and not db.ofertas_recentes({p["chave"]}, 24)]
+    from buscador import permite_publicar
+    # 200: produtos novos das buscas (sem histórico, só com preço "de" da loja) ficam no fim da ordenação
+    candidatos = [p for p in db.menores_precos_do_dia(limit=200)
+                  if selo(p) and not db.ofertas_recentes({p["chave"]}, 24) and permite_publicar(p)]
     conta_id = next(iter(tm.clients), None)
     for p in candidatos:
         try:
@@ -159,7 +161,14 @@ async def loop_manutencao(tm):
 
 async def iniciar(tm):
     """Sobe as rotinas autônomas no loop do TelegramManager (referências fortes em tm._tasks)."""
-    for rotina in (loop_piloto, loop_manutencao):
+    import fontes
+    from buscador import loop_buscador
+
+    loop = asyncio.get_running_loop()
+    # Bloqueio de fonte acontece numa thread do buscador: o alerta ao admin roda no loop do bot
+    fontes.ao_bloquear(lambda fid, texto: asyncio.run_coroutine_threadsafe(
+        alertar(tm, f"fonte-{fid}-{texto[:50]}", texto), loop))
+    for rotina in (loop_piloto, loop_manutencao, loop_buscador):
         task = asyncio.create_task(rotina(tm))
         tm._tasks.add(task)
-    print("[Autonomia] Piloto automático e manutenção ativos.")
+    print("[Autonomia] Piloto automático, buscador e manutenção ativos.")

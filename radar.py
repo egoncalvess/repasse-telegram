@@ -16,6 +16,11 @@ VALOR_RE = re.compile(r"R\$\s*(\d{1,3}(?:\.\d{3})+|\d+)(?:,(\d{1,2}))?")
 NAO_PRECO_RE = re.compile(r"(cupom|desconto|off|frete|economi|cashback|parcela|\dx\s*de|x\s*$)", re.IGNORECASE)
 
 
+def caminho_imagem(chave: str) -> Path:
+    """Arquivo da foto do produto (mesmo nome para canais e fontes de busca)."""
+    return PASTA_IMAGENS / (re.sub(r"[^\w-]", "_", chave) + ".jpg")
+
+
 def _valor(m) -> float:
     return float(m.group(1).replace(".", "") + "." + (m.group(2) or "0"))
 
@@ -72,7 +77,7 @@ async def capturar(msg, texto: str, origem: str, visto_em=None) -> int:
     imagem = None
     if msg is not None and getattr(msg, "photo", None) and not db.tem_imagem(chave):
         PASTA_IMAGENS.mkdir(parents=True, exist_ok=True)
-        destino = PASTA_IMAGENS / (re.sub(r"[^\w-]", "_", chave) + ".jpg")
+        destino = caminho_imagem(chave)
         try:
             await msg.download_media(file=str(destino))
             imagem = str(destino)
