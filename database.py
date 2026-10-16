@@ -149,6 +149,14 @@ def init_db():
             PRIMARY KEY (busca_id, chave)
         );
 
+        -- Piloto em modo aprovação: ofertas esperando o admin decidir (Publicar / Descartar)
+        CREATE TABLE IF NOT EXISTS fila_publicacao (
+            id        INTEGER PRIMARY KEY AUTOINCREMENT,
+            chave     TEXT NOT NULL,
+            status    TEXT NOT NULL DEFAULT 'pendente',   -- pendente | aprovada | descartada
+            criado_em TEXT NOT NULL                       -- YYYY-MM-DD HH:MM:SS (hora local)
+        );
+
         -- Endpoint que respondeu 401/403: fica bloqueado até um novo teste manual da fonte
         CREATE TABLE IF NOT EXISTS fonte_endpoints (
             fonte_id      TEXT NOT NULL,
@@ -746,3 +754,64 @@ def buscas_do_produto(chave: str):
     """, (chave,)).fetchall()
     conn.close()
     return [dict(r) for r in rows]
+
+
+def get_produto(chave: str):
+    conn = get_conn()
+    row = conn.execute("SELECT * FROM produtos WHERE chave=?", (chave,)).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+# ── Fila de aprovação do piloto ───────────────────────────────────────────────
+
+def adicionar_fila(chave: str) -> int:
+    conn = get_conn()
+    cur = conn.execute("INSERT INTO fila_publicacao (chave, status, criado_em) "
+                       "VALUES (?, 'pendente', datetime('now', 'localtime'))", (chave,))
+    conn.commit()
+    conn.close()
+    return cur.lastrowid
+
+
+def get_fila(fila_id: int):
+    conn = get_conn()
+    row = conn.execute("SELECT * FROM fila_publicacao WHERE id=?", (fila_id,)).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def listar_fila(status: str = "pendente", limit: int = 20):
+    """Itens da fila com o nome/loja do produto."""
+    conn = get_conn()
+    rows = conn.execute("""
+        SELECT f.*, p.nome, p.loja, p.url FROM fila_publicacao f LEFT JOIN produtos p USING (chave)
+        WHERE f.status=? ORDER BY f.criado_em DESC LIMIT ?
+    """, (status, limit)).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def contar_fila_pendente() -> int:
+    conn = get_conn()
+    n = conn.execute("SELECT COUNT(*) FROM fila_publicacao WHERE status='pendente'").fetchone()[0]
+    conn.close()
+    return n
+
+
+def decidir_fila(fila_id: int, status: str):
+    conn = get_conn()
+    conn.execute("UPDATE fila_publicacao SET status=? WHERE id=?", (status, fila_id))
+    conn.commit()
+    conn.close()
+
+
+def na_fila(chave: str, horas: int = 24) -> bool:
+    """Produto pendente, ou já decidido nas últimas X horas (não volta a pedir aprovação)."""
+    conn = get_conn()
+    row = conn.execute("""
+        SELECT 1 FROM fila_publicacao WHERE chave=? AND
+            (status='pendente' OR criado_em >= datetime('now', 'localtime', ?)) LIMIT 1
+    """, (chave, f"-{int(horas)} hours")).fetchone()
+    conn.close()
+    return row is not None

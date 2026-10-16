@@ -30,7 +30,8 @@ class TelegramManager:
         self.bot: TelegramClient | None = None              # bot oficial: publica e serve o painel
         self.clients: dict[int, TelegramClient] = {}       # conta_id -> client
         self._pending: dict[int, TelegramClient] = {}      # aguardando código
-        self._handlers: dict[int, list] = {}               # repasse_id -> handlers (mensagem e álbum)
+        self._handlers: dict[int, list] = {}               # repasse_id -> [(client que lê, handler)]
+        self.leitura: dict[tuple, str] = {}                # (repasse_id, origem_id) -> "bot" | "conta" | "sem acesso"
         self._radar_handlers: dict[int, callable] = {}     # conta_id -> handler do radar
         self._ritmo: dict[int, dict] = {}                  # repasse_id -> {lock, ultimo envio (monotonic)}
         self._ofertas_em_envio: set[str] = set()           # chaves de produto reservadas por envios em curso
@@ -85,6 +86,7 @@ class TelegramManager:
         import admin_panel
         admin_panel.registrar(bot, self)
         self.bot = bot
+        self.restaurar_repasses_ativos()  # o bot assume a leitura das origens onde é administrador
         return (await bot.get_me()).username
 
     def iniciar_bot(self, callback=None):
@@ -103,13 +105,16 @@ class TelegramManager:
         self._run(self._start_bot()).add_done_callback(_done)
 
     def via_bot(self) -> bool:
-        return self.bot is not None and db.get_config("publicar_via_bot", "1") == "1"
+        return self.bot is not None
 
     async def enviar(self, conta_id, destino, texto, file=None, botao_url=None, html=False):
-        """Publica no destino: pelo bot quando ativo (API oficial, sem risco de ban da conta), senão pela conta."""
-        if self.via_bot():
+        """Publica no destino. Com bot configurado, SEMPRE pelo bot (a conta só lê); sem bot, pela conta."""
+        if self.bot is not None:
             client = self.bot
             buttons = [Button.url("🛒 Ver oferta", botao_url)] if botao_url else None
+        elif (db.get_config("bot_token") or "").strip():
+            raise RuntimeError("Bot configurado, mas offline: nada é enviado pela conta. "
+                               "Verifique o bot em Configurações → Bot.")
         else:
             client = self.clients.get(conta_id)
             if not client:
@@ -132,11 +137,12 @@ class TelegramManager:
                     if isinstance(f, io.BytesIO):
                         f.seek(0)  # o upload da tentativa anterior consumiu o arquivo
 
-    async def _midia_para_envio(self, msg):
-        """Mídia da origem pronta para reenvio. O bot não enxerga arquivos da conta: baixa os bytes uma vez."""
+    async def _midia_para_envio(self, msg, leitor=None):
+        """Mídia da origem pronta para reenvio. Quem lê e quem envia são o mesmo client: reaproveita a mídia;
+        senão (conta lê, bot envia) baixa os bytes uma vez. leitor=None é a conta."""
         if not msg.media or isinstance(msg.media, MessageMediaWebPage):
             return None  # prévia de link é gerada de novo pelo próprio Telegram
-        if not self.via_bot():
+        if (leitor is not None and leitor is self.bot) == self.via_bot():
             return msg.media
         buf = io.BytesIO()
         await msg.download_media(file=buf)
@@ -309,174 +315,233 @@ class TelegramManager:
         if not r:
             return
 
-        client = self.clients.get(r["conta_id"])
-        if not client:
+        conta = self.clients.get(r["conta_id"])
+        if not conta and not self.bot:
             return
 
         # Evitar duplicados
         await self._stop_repasse(repasse_id, r["conta_id"])
 
-        filtros = json.loads(r["filtros"] or "{}")
-        subs = json.loads(r["substituicoes"] or "[]")
-        destinos = db.listar_destinos(repasse_id)
+        ctx = {"filtros": json.loads(r["filtros"] or "{}"), "subs": json.loads(r["substituicoes"] or "[]"),
+               "destinos": db.listar_destinos(repasse_id), "conta_id": r["conta_id"]}
 
-        async def _processar(msgs: list, text: str):
-            """Uma postagem da origem (mensagem única ou álbum) passa pelos filtros e vai para os destinos."""
-            # Verificar se repasse ainda está ativo
-            current = db.get_repasse(repasse_id)
-            if not current or not current["ativo"]:
-                return
-            chat = await msgs[0].get_chat()
-            print(f"[Repasse {current['descricao']}] nova mensagem de {getattr(chat, 'title', msgs[0].chat_id)}")
-
-            # Pausa global (painel do bot)
-            if db.get_config("pausado", "0") == "1":
-                return
-
-            # Limite diário (contado no banco: sobrevive a reinícios; conferido de novo antes de enviar)
-            limite = current["limite_diario"] or 0
-            if limite > 0 and db.enviadas_hoje(repasse_id) >= limite:
-                return
-
-            # Horário (aceita janela que cruza a meia-noite, ex.: 22:00–06:00)
-            h_ini = current["horario_inicio"] or "00:00"
-            h_fim = current["horario_fim"] or "00:00"
-            import autonomia
-            if not autonomia.dentro_do_horario(h_ini, h_fim):
-                return
-
-            # Filtro bloqueio de termos
-            termos_bloquear = current["termos_bloquear"] or ""
-            if termos_bloquear:
-                for t in termos_bloquear.split(","):
-                    if t.strip() and t.strip().lower() in text.lower():
-                        return
-
-            # Filtro permissão de termos
-            termos_permitir = current["termos_permitir"] or ""
-            if termos_permitir:
-                allowed = False
-                for t in termos_permitir.split(","):
-                    if t.strip() and t.strip().lower() in text.lower():
-                        allowed = True
-                        break
-                if not allowed:
-                    return
-
-            # Filtros de mídia (num álbum, basta um item do tipo bloqueado)
-            if filtros.get("links") and re.search(r"https?://\S+", text):
-                return
-            if filtros.get("imagens") and any(m.photo for m in msgs):
-                return
-            if filtros.get("videos") and any(m.video for m in msgs):
-                return
-            if filtros.get("audios") and any(m.audio or m.voice for m in msgs):
-                return
-
-            # Ofertas: exige link de loja e/ou ignora produto já publicado nas últimas 24h
-            chaves = set()
-            if filtros.get("somente_ofertas") or filtros.get("sem_repetidas"):
-                import dedup
-                chaves = await dedup.chaves_do_texto(text)
-                if filtros.get("somente_ofertas") and not chaves:
-                    return
-                # Produto em envio agora (outro canal postou a mesma oferta segundos antes) também conta como repetido
-                if filtros.get("sem_repetidas") and chaves and chaves <= (db.ofertas_recentes(chaves)
-                                                                          | self._ofertas_em_envio):
-                    db.adicionar_historico(repasse_id, "-", "Ignorada", "Produto já publicado nas últimas 24h")
-                    return
-
-            # Reserva os produtos até o fim do envio (checagem e reserva sem await entre elas)
-            reservadas = (chaves - self._ofertas_em_envio) if filtros.get("sem_repetidas") else set()
-            self._ofertas_em_envio |= reservadas
-            try:
-                # Substituições manuais
-                for sub in subs:
-                    busca = sub.get("busca", "")
-                    replace = sub.get("substituir", "")
-                    if busca:
-                        text = text.replace(busca, replace)
-
-                # Substituição inteligente de afiliados
-                if filtros.get("substituir_afiliados"):
-                    try:
-                        from affiliate_helper import converter_links
-                        text, nao_convertidos = await converter_links(text)
-                    except Exception as aff_err:
-                        db.adicionar_historico(repasse_id, "-", "Erro Afiliados", str(aff_err))
-                        nao_convertidos = ["(erro na conversão)"]
-                    # Não divulga link que renderia comissão para outra pessoa
-                    if nao_convertidos and filtros.get("exigir_afiliado"):
-                        db.adicionar_historico(repasse_id, "-", "Ignorada",
-                                               "Link sem conversão p/ afiliado: " + ", ".join(nao_convertidos)[:300])
-                        return
-
-                # Ritmo: um envio por vez por repasse, com pelo menos `delay` segundos entre eles
-                ritmo = self._ritmo.setdefault(repasse_id, {"lock": asyncio.Lock(), "ultimo": 0.0})
-                async with ritmo["lock"]:
-                    if limite > 0 and db.enviadas_hoje(repasse_id) >= limite:
-                        return
-                    delay = current["delay"] if current["delay"] is not None else 1
-                    espera = ritmo["ultimo"] + delay - time.monotonic()
-                    if espera > 0:
-                        await asyncio.sleep(espera)
-
-                    # Mídia baixada uma vez só, reaproveitada em todos os destinos
-                    midias = [m for m in [await self._midia_para_envio(msg) for msg in msgs] if m is not None]
-
-                    # Enviar para destinos (bot se ativo, senão a própria conta)
-                    enviado = False
-                    for dest in destinos:
-                        try:
-                            arquivos = [self._arquivo(m) for m in midias]
-                            arquivo = arquivos if len(arquivos) > 1 else (arquivos[0] if arquivos else None)
-                            await self.enviar(r["conta_id"], dest["grupo_id"], text, file=arquivo)
-                            db.incrementar_repasse(repasse_id)
-                            db.adicionar_historico(repasse_id, dest["grupo_nome"], "Sucesso")
-                            enviado = True
-                        except Exception as exc:
-                            db.adicionar_historico(repasse_id, dest["grupo_nome"], "Falha", str(exc))
-                            await autonomia.alertar(self, f"repasse{repasse_id}-{dest['grupo_id']}",
-                                                    f"Repasse '{current['descricao']}' falhou para {dest['grupo_nome']}: {exc}")
-                    ritmo["ultimo"] = time.monotonic()
-                    if enviado:
-                        db.registrar_envio_dia(repasse_id)
-                        if chaves:
-                            db.marcar_ofertas(chaves)
-            finally:
-                self._ofertas_em_envio -= reservadas
-
-        async def _nova_mensagem(event):
-            if event.message.grouped_id:  # item de álbum: vai inteiro pelo handler de Album
-                return
-            await _processar([event.message], event.message.text or "")
-
-        async def _novo_album(event):
-            await _processar(list(event.messages), next((m.text for m in event.messages if m.text), ""))
-
-        # Registrar handlers em todas as origens do repasse
+        # Cada origem é lida pelo bot quando ele consegue (admin); senão pela conta, só leitura
         origens = db.listar_origens(repasse_id) or ([{"origem_id": r["origem_id"], "origem_nome": r["origem_nome"]}]
                                                      if r["origem_id"] else [])
-        entidades = []
+        por_leitor: dict = {}
         for o in origens:
             try:
-                ent = await self.resolve_entity(client, o["origem_id"])
-                if isinstance(ent, (str, int)):
-                    raise ValueError("a conta não participa deste grupo/canal")
-                entidades.append(ent)
+                leitor, ent, motivo = await self._leitor_da_origem(o["origem_id"], conta)
+                if leitor is None:
+                    raise ValueError(motivo)
+                por_leitor.setdefault(leitor, []).append(ent)
+                self.leitura[(repasse_id, str(o["origem_id"]))] = "bot" if leitor is self.bot else "conta"
             except Exception as e:
+                self.leitura[(repasse_id, str(o["origem_id"]))] = "sem acesso"
                 db.adicionar_historico(repasse_id, o["origem_nome"] or o["origem_id"], "Falha ao iniciar", str(e))
-        if entidades:
-            client.add_event_handler(_nova_mensagem, events.NewMessage(chats=entidades))
-            client.add_event_handler(_novo_album, events.Album(chats=entidades))
-            self._handlers[repasse_id] = [_nova_mensagem, _novo_album]
+
+        registrados = []
+        for leitor, entidades in por_leitor.items():
+            def _handlers(leitor=leitor):
+                async def _nova_mensagem(event):
+                    if event.message.grouped_id:  # item de álbum: vai inteiro pelo handler de Album
+                        return
+                    await self._processar_postagem(repasse_id, ctx, [event.message], event.message.text or "", leitor)
+
+                async def _novo_album(event):
+                    await self._processar_postagem(repasse_id, ctx, list(event.messages),
+                                                   next((m.text for m in event.messages if m.text), ""), leitor)
+                return _nova_mensagem, _novo_album
+
+            nova, album = _handlers()
+            leitor.add_event_handler(nova, events.NewMessage(chats=entidades))
+            leitor.add_event_handler(album, events.Album(chats=entidades))
+            registrados += [(leitor, nova), (leitor, album)]
+        if registrados:
+            self._handlers[repasse_id] = registrados
+
+    async def _processar_postagem(self, repasse_id: int, ctx: dict, msgs: list, text: str, leitor=None):
+        """Pipeline único do repasse: uma postagem da origem (mensagem única ou álbum), lida pela conta ou
+        pelo bot (leitor), passa pelos filtros e vai para os destinos."""
+        filtros = ctx["filtros"]
+        # Verificar se repasse ainda está ativo
+        current = db.get_repasse(repasse_id)
+        if not current or not current["ativo"]:
+            return
+        chat = await msgs[0].get_chat()
+        print(f"[Repasse {current['descricao']}] nova mensagem de {getattr(chat, 'title', msgs[0].chat_id)}")
+
+        # Pausa global (painel do bot)
+        if db.get_config("pausado", "0") == "1":
+            return
+
+        # Limite diário (contado no banco: sobrevive a reinícios; conferido de novo antes de enviar)
+        limite = current["limite_diario"] or 0
+        if limite > 0 and db.enviadas_hoje(repasse_id) >= limite:
+            return
+
+        # Horário (aceita janela que cruza a meia-noite, ex.: 22:00–06:00)
+        h_ini = current["horario_inicio"] or "00:00"
+        h_fim = current["horario_fim"] or "00:00"
+        import autonomia
+        if not autonomia.dentro_do_horario(h_ini, h_fim):
+            return
+
+        # Filtro bloqueio de termos
+        termos_bloquear = current["termos_bloquear"] or ""
+        if termos_bloquear:
+            for t in termos_bloquear.split(","):
+                if t.strip() and t.strip().lower() in text.lower():
+                    return
+
+        # Filtro permissão de termos
+        termos_permitir = current["termos_permitir"] or ""
+        if termos_permitir:
+            allowed = False
+            for t in termos_permitir.split(","):
+                if t.strip() and t.strip().lower() in text.lower():
+                    allowed = True
+                    break
+            if not allowed:
+                return
+
+        # Filtros de mídia (num álbum, basta um item do tipo bloqueado)
+        if filtros.get("links") and re.search(r"https?://\S+", text):
+            return
+        if filtros.get("imagens") and any(m.photo for m in msgs):
+            return
+        if filtros.get("videos") and any(m.video for m in msgs):
+            return
+        if filtros.get("audios") and any(m.audio or m.voice for m in msgs):
+            return
+
+        # Ofertas: exige link de loja e/ou ignora produto já publicado nas últimas 24h
+        chaves = set()
+        if filtros.get("somente_ofertas") or filtros.get("sem_repetidas"):
+            import dedup
+            chaves = await dedup.chaves_do_texto(text)
+            if filtros.get("somente_ofertas") and not chaves:
+                return
+            # Produto em envio agora (outro canal postou a mesma oferta segundos antes) também conta como repetido
+            if filtros.get("sem_repetidas") and chaves and chaves <= (db.ofertas_recentes(chaves)
+                                                                      | self._ofertas_em_envio):
+                db.adicionar_historico(repasse_id, "-", "Ignorada", "Produto já publicado nas últimas 24h")
+                return
+
+        # Reserva os produtos até o fim do envio (checagem e reserva sem await entre elas)
+        reservadas = (chaves - self._ofertas_em_envio) if filtros.get("sem_repetidas") else set()
+        self._ofertas_em_envio |= reservadas
+        try:
+            # Substituições manuais
+            for sub in ctx["subs"]:
+                busca = sub.get("busca", "")
+                replace = sub.get("substituir", "")
+                if busca:
+                    text = text.replace(busca, replace)
+
+            # Substituição inteligente de afiliados
+            if filtros.get("substituir_afiliados"):
+                try:
+                    from affiliate_helper import converter_links
+                    text, nao_convertidos = await converter_links(text)
+                except Exception as aff_err:
+                    db.adicionar_historico(repasse_id, "-", "Erro Afiliados", str(aff_err))
+                    nao_convertidos = ["(erro na conversão)"]
+                # Não divulga link que renderia comissão para outra pessoa
+                if nao_convertidos and filtros.get("exigir_afiliado"):
+                    db.adicionar_historico(repasse_id, "-", "Ignorada",
+                                           "Link sem conversão p/ afiliado: " + ", ".join(nao_convertidos)[:300])
+                    return
+
+            # Ritmo: um envio por vez por repasse, com pelo menos `delay` segundos entre eles
+            ritmo = self._ritmo.setdefault(repasse_id, {"lock": asyncio.Lock(), "ultimo": 0.0})
+            async with ritmo["lock"]:
+                if limite > 0 and db.enviadas_hoje(repasse_id) >= limite:
+                    return
+                delay = current["delay"] if current["delay"] is not None else 1
+                espera = ritmo["ultimo"] + delay - time.monotonic()
+                if espera > 0:
+                    await asyncio.sleep(espera)
+
+                # Mídia baixada uma vez só, reaproveitada em todos os destinos
+                midias = [m for m in [await self._midia_para_envio(msg, leitor) for msg in msgs] if m is not None]
+
+                # Enviar para destinos (bot se ativo, senão a própria conta)
+                enviado = False
+                for dest in ctx["destinos"]:
+                    try:
+                        arquivos = [self._arquivo(m) for m in midias]
+                        arquivo = arquivos if len(arquivos) > 1 else (arquivos[0] if arquivos else None)
+                        await self.enviar(ctx["conta_id"], dest["grupo_id"], text, file=arquivo)
+                        db.incrementar_repasse(repasse_id)
+                        db.adicionar_historico(repasse_id, dest["grupo_nome"], "Sucesso")
+                        enviado = True
+                    except Exception as exc:
+                        db.adicionar_historico(repasse_id, dest["grupo_nome"], "Falha", str(exc))
+                        await autonomia.alertar(self, f"repasse{repasse_id}-{dest['grupo_id']}",
+                                                f"Repasse '{current['descricao']}' falhou para {dest['grupo_nome']}: {exc}")
+                ritmo["ultimo"] = time.monotonic()
+                if enviado:
+                    db.registrar_envio_dia(repasse_id)
+                    if chaves:
+                        db.marcar_ofertas(chaves)
+        finally:
+            self._ofertas_em_envio -= reservadas
 
     async def _stop_repasse(self, repasse_id: int, conta_id: int):
-        handlers = self._handlers.pop(repasse_id, [])
-        client = self.clients.get(conta_id)
-        if client:
-            for handler in handlers:
-                client.remove_event_handler(handler)
+        for client, handler in self._handlers.pop(repasse_id, []):
+            client.remove_event_handler(handler)
+
+    async def _bot_le(self, origem_id):
+        """Entidade da origem se o bot recebe as mensagens dela: admin, ou membro de grupo com a
+        privacidade do bot desligada. Canal só entrega posts a bot administrador."""
+        from telethon.tl.types import Chat, User
+        try:
+            ent = await self.resolve_entity(self.bot, origem_id)
+            if isinstance(ent, (str, int, User)):
+                return None
+            if (await self.bot.get_permissions(ent, "me")).is_admin:
+                return ent
+            eh_grupo = isinstance(ent, Chat) or getattr(ent, "megagroup", False)
+            if eh_grupo and getattr(await self.bot.get_me(), "bot_chat_history", False):
+                return ent
+        except Exception:
+            pass
+        return None
+
+    async def _leitor_da_origem(self, origem_id, conta):
+        """(client que lê, entidade, motivo se nenhum lê). O bot tem preferência; a conta só lê."""
+        if self.bot:
+            ent = await self._bot_le(origem_id)
+            if ent is not None:
+                return self.bot, ent, None
+        if conta:
+            ent = await self.resolve_entity(conta, origem_id)
+            if not isinstance(ent, (str, int)):
+                return conta, ent, None
+            return None, None, "a conta não participa deste grupo/canal"
+        return None, None, ("o bot não lê este chat (adicione-o como administrador) e a conta do repasse "
+                            "não está conectada")
+
+    async def _leitura_origens(self, conta_id, origem_ids) -> dict:
+        conta = self.clients.get(conta_id)
+        res = {}
+        for oid in origem_ids:
+            try:
+                leitor, _, _ = await self._leitor_da_origem(oid, conta)
+            except Exception:
+                leitor = None
+            res[str(oid)] = "sem acesso" if leitor is None else ("bot" if leitor is self.bot else "conta")
+        return res
+
+    def leitura_origens(self, conta_id, origem_ids, callback):
+        """{origem_id: "bot" | "conta" | "sem acesso"} para a UI (callback fora do loop)."""
+        def _done(fut):
+            try:
+                callback(fut.result(), None)
+            except Exception as e:
+                callback({}, str(e))
+        self._run(self._leitura_origens(conta_id, list(origem_ids))).add_done_callback(_done)
 
     # ── Importação de histórico (Radar) ──────────────────────────────────────
 
@@ -583,7 +648,7 @@ class TelegramManager:
     def restaurar_repasses_ativos(self):
         """Chamado no startup para reativar repasses que estavam ativos."""
         for r in db.listar_repasses():
-            if r["ativo"] and r["conta_id"] in self.clients:
+            if r["ativo"] and (r["conta_id"] in self.clients or self.bot):
                 self.iniciar_repasse(r["id"])
 
     def restaurar_repasses_conta(self, conta_id: int):

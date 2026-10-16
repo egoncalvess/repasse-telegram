@@ -47,17 +47,55 @@ def executar(busca: dict) -> str:
         status = f"erro: {e}"
     else:
         for p in produtos:
-            imagem = None
-            try:
-                imagem = salvar_imagem(fonte, p.chave, p.imagem_url)
-            except Exception as e:  # foto é opcional: não derruba a busca
-                print(f"[Buscador] Falha ao salvar a foto de {p.chave}: {e}")
-            db.registrar_preco(p.chave, p.nome, p.loja, p.url, p.preco, origem=f"fonte:{fonte.id}",
-                               imagem=imagem, preco_original=p.preco_original)
-            db.registrar_resultado_busca(busca["id"], p.chave, p.preco, p.preco_original, p.frete_gratis)
+            registrar_produto(fonte, p, busca["id"])
         status = f"ok: {len(produtos)} produto(s)"
     db.marcar_execucao_busca(busca["id"], status)
     return status
+
+
+def registrar_produto(fonte, p, busca_id: int = None):
+    """Preço no radar (origem fonte:<id>), foto em data/imagens e, se veio de uma busca, o resultado dela."""
+    imagem = None
+    try:
+        imagem = salvar_imagem(fonte, p.chave, p.imagem_url)
+    except Exception as e:  # foto é opcional: não derruba a busca
+        print(f"[Buscador] Falha ao salvar a foto de {p.chave}: {e}")
+    db.registrar_preco(p.chave, p.nome, p.loja, p.url, p.preco, origem=f"fonte:{fonte.id}",
+                       imagem=imagem, preco_original=p.preco_original)
+    if busca_id is not None:
+        db.registrar_resultado_busca(busca_id, p.chave, p.preco, p.preco_original, p.frete_gratis)
+
+
+def buscar_agora(termo: str, limite: int = 10) -> tuple[list, list[str]]:
+    """Busca por termo em todas as fontes ativas, grava no radar e devolve ([ProdutoEncontrado], erros),
+    do maior desconto informado pela loja para o menor, e então do menor preço."""
+    achados, erros = [], []
+    for fonte in fontes.ativas():
+        try:
+            for p in fonte.buscar(Busca("termo", termo, limite)):
+                registrar_produto(fonte, p)
+                achados.append(p)
+        except Exception as e:
+            erros.append(f"{fonte.nome}: {e}")
+
+    def desconto(p):
+        return (1 - p.preco / p.preco_original) if p.preco_original else 0
+    achados.sort(key=lambda p: (-desconto(p), p.preco))
+    return achados, erros
+
+
+def monitorar(chave: str) -> tuple[int | None, str]:
+    """Cria uma busca do tipo produto para o item (ex.: botão Monitorar do /buscar). (id, mensagem)"""
+    prod = db.get_produto(chave)
+    fonte = fontes.get(chave.split(":")[0])
+    if not prod or not fonte:
+        return None, "Produto ou fonte não encontrados."
+    for b in db.listar_buscas():
+        if b["fonte_id"] == fonte.id and b["tipo"] == "produto" and b["valor"] == prod["url"]:
+            return b["id"], f"Já monitorado: {b['nome']}"
+    bid = db.adicionar_busca({"fonte_id": fonte.id, "nome": prod["nome"][:60], "tipo": "produto",
+                              "valor": prod["url"], "intervalo_min": fonte.intervalo_min_padrao})
+    return bid, f"Monitorando: {prod['nome'][:60]}"
 
 
 def pode_executar(busca: dict) -> str | None:

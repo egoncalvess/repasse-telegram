@@ -109,7 +109,8 @@ class ConfiguracoesFrame(ctk.CTkFrame):
                      font=("Segoe UI", 15, "bold")).pack(anchor="w", padx=20, pady=(20, 4))
         ctk.CTkLabel(card,
                      text="Crie o bot no @BotFather e adicione-o como administrador dos grupos/canais de destino.\n"
-                          "A conta continua só lendo as origens; quem publica é o bot (API oficial, sem risco de ban da conta).",
+                          "Com o bot configurado, tudo é publicado por ele; a conta só lê os canais onde o bot não entra.\n"
+                          "Para o bot ler uma origem sozinho, adicione-o a ela (em canal, como administrador).",
                      font=("Segoe UI", 11), text_color=("#64748b", "#94a3b8"), justify="left").pack(anchor="w", padx=20)
 
         ctk.CTkLabel(card, text="Token do bot").pack(anchor="w", padx=20, pady=(16, 4))
@@ -122,10 +123,6 @@ class ConfiguracoesFrame(ctk.CTkFrame):
                                        placeholder_text="Mande /start ao bot: ele responde com o seu ID")
         self._bot_admin.pack(anchor="w", padx=20)
         self._bot_admin.insert(0, db.get_config("bot_admin_id") or "")
-
-        self._via_bot = ctk.BooleanVar(value=db.get_config("publicar_via_bot", "1") == "1")
-        ctk.CTkSwitch(card, text="Publicar pelo bot (desligado = publica pela conta, modo antigo)",
-                      variable=self._via_bot).pack(anchor="w", padx=20, pady=(16, 0))
 
         ctk.CTkButton(card, text="Salvar e conectar bot", command=self._save_bot,
                       fg_color=BTN_BLUE[0], hover_color=BTN_BLUE[1],
@@ -152,7 +149,7 @@ class ConfiguracoesFrame(ctk.CTkFrame):
             self._bot_teste_res.configure(text="Informe o ID do canal/grupo.")
             return
         if not telegram_manager.via_bot():
-            self._bot_teste_res.configure(text="🔴 Bot não conectado (ou 'Publicar pelo bot' desligado).")
+            self._bot_teste_res.configure(text="🔴 Bot não conectado. Salve o token e conecte o bot.")
             return
         self._bot_teste_res.configure(text="🟡 Enviando...")
         texto = "✅ <b>Teste do bot</b>\nSe você está vendo esta mensagem, o bot consegue publicar aqui."
@@ -183,7 +180,6 @@ class ConfiguracoesFrame(ctk.CTkFrame):
 
         db.set_config("bot_token", token)
         db.set_config("bot_admin_id", admin)
-        db.set_config("publicar_via_bot", "1" if self._via_bot.get() else "0")
         if not token:
             self._bot_status.configure(text="⚪ Sem token: publicação pela conta")
             return

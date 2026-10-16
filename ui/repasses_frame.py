@@ -3,7 +3,7 @@ import customtkinter as ctk
 from tkinter import messagebox
 import database as db
 from telegram_manager import telegram_manager
-from ui.estilo import Tabela, botao, cabecalho, card, FUNDO, F_PEQUENA, TEXTO_SEC
+from ui.estilo import Tabela, botao, cabecalho, card, FUNDO, F_PEQUENA, TEXTO_SEC, VERMELHO
 
 
 class RepassesFrame(ctk.CTkFrame):
@@ -16,6 +16,11 @@ class RepassesFrame(ctk.CTkFrame):
         botao(acoes, "Relatório", self._report, "cinza", 100).pack(side="left", padx=4)
         botao(acoes, "Remover", self._remove, "vermelho", 100).pack(side="left", padx=4)
 
+        # Sem bot, as mensagens saem pela conta de usuário (comportamento antigo): recomenda configurar o bot
+        self._aviso_bot = ctk.CTkLabel(self, text="", font=F_PEQUENA, text_color=VERMELHO, justify="left",
+                                       wraplength=760)
+        self._aviso_bot.pack(anchor="w", padx=24, pady=(0, 6))
+
         c = card(self, fill="both", expand=True)
         self._tabela = Tabela(c, [("status", "Status", 2), ("nome", "Nome", 4), ("origens", "Origens", 6),
                                   ("destinos", "Destinos", 5), ("total", "Enviados", 2)], altura=14)
@@ -25,6 +30,9 @@ class RepassesFrame(ctk.CTkFrame):
                      text_color=TEXTO_SEC).pack(anchor="w", padx=24, pady=(0, 10))
 
     def refresh(self):
+        self._aviso_bot.configure(text="" if (db.get_config("bot_token") or "").strip() else
+                                  "Sem bot configurado: os repasses são enviados pela sua conta. Configure o bot em "
+                                  "Configurações → Bot para publicar pela API oficial e deixar a conta só lendo.")
         linhas, ids = [], []
         for r in db.listar_repasses():
             origens = [o["origem_nome"] for o in db.listar_origens(r["id"])]

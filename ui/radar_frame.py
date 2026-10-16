@@ -50,6 +50,13 @@ class RadarFrame(ctk.CTkFrame):
             e.pack(side="left")
             self._pil_campos[chave] = e
             col += 1
+        # Modo: publica sozinho, ou pede aprovação ao admin no privado do bot (Publicar / Descartar)
+        self._modos = {"automático": "automatico", "com aprovação": "aprovacao"}
+        modo_atual = db.get_config("piloto_modo", "automatico")
+        self._modo_var = ctk.StringVar(value=next((k for k, v in self._modos.items() if v == modo_atual), "automático"))
+        ctk.CTkOptionMenu(cfg, variable=self._modo_var, values=list(self._modos), width=130,
+                          height=30).grid(row=0, column=col, padx=4)
+        col += 1
         botao(cfg, "Salvar", self._salvar_cfg, "azul", 80).grid(row=0, column=col, padx=(8, 14))
         self._pil_status = ctk.CTkLabel(cfg, text="", font=F_PEQUENA, text_color=TEXTO_SEC)
         self._pil_status.grid(row=1, column=0, columnspan=10, sticky="w", padx=14, pady=(0, 8))
@@ -72,6 +79,8 @@ class RadarFrame(ctk.CTkFrame):
         self._resumo.configure(text=f"{r['produtos']} produtos monitorados · {r['precos_hoje']} preços hoje · "
                                     f"{n_fontes} fontes do radar + origens dos repasses ativos")
         self._piloto.set(db.get_config("piloto_ativo", "0") == "1")  # pode mudar pelo painel do bot
+        modo = db.get_config("piloto_modo", "automatico")
+        self._modo_var.set(next((k for k, v in self._modos.items() if v == modo), "automático"))
         self._pil_status.configure(text="Piloto — última rodada: " + (db.get_config("piloto_status") or "—"))
         itens = db.menores_precos_do_dia(limit=100)
         self._tabela.carregar(
@@ -135,6 +144,7 @@ class RadarFrame(ctk.CTkFrame):
             db.set_config(k, val)
         db.set_config("radar_destino", self._destino.get().strip())
         db.set_config("piloto_ativo", "1" if self._piloto.get() else "0")
+        db.set_config("piloto_modo", self._modos[self._modo_var.get()])
         if self._piloto.get() and not self._destino.get().strip():
             messagebox.showwarning("Aviso", "Informe o destino para o piloto publicar.", parent=self)
         self.refresh()

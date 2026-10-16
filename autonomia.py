@@ -64,7 +64,9 @@ async def ciclo_piloto(tm) -> str:
     if not dentro_do_horario(cfg("piloto_inicio", "08:00"), cfg("piloto_fim", "22:00")):
         return "fora do horário"
     maximo = int(cfg("piloto_max_dia", "10"))
-    if publicados_pelo_piloto_hoje() >= maximo:
+    aprovacao = cfg("piloto_modo", "automatico") == "aprovacao"
+    # em aprovação, os pendentes contam no limite: não pede ao admin mais do que pode sair no dia
+    if publicados_pelo_piloto_hoje() + (db.contar_fila_pendente() if aprovacao else 0) >= maximo:
         return f"limite diário atingido ({maximo})"
     destino = cfg("radar_destino", "")
     if not destino:
@@ -74,6 +76,15 @@ async def ciclo_piloto(tm) -> str:
     # 200: produtos novos das buscas (sem histórico, só com preço "de" da loja) ficam no fim da ordenação
     candidatos = [p for p in db.menores_precos_do_dia(limit=200)
                   if selo(p) and not db.ofertas_recentes({p["chave"]}, 24) and permite_publicar(p)]
+    if aprovacao:
+        import admin_panel
+        for p in candidatos:
+            if db.na_fila(p["chave"]):
+                continue
+            fila_id = db.adicionar_fila(p["chave"])
+            await admin_panel.avisar_fila(tm, fila_id, p)
+            return f"aguardando aprovação: {p['nome'][:40]} ({selo(p)})"
+        return "nenhuma oferta nova para aprovar"
     conta_id = next(iter(tm.clients), None)
     for p in candidatos:
         try:

@@ -20,6 +20,7 @@ class RepasseDialog(ctk.CTkToplevel):
         self._origens: list[dict] = []   # {'origem_id', 'origem_nome'}
         self._destinos: list[dict] = []  # {'grupo_id', 'grupo_nome'}
         self._subs: list[dict] = []
+        self._leitura: dict[str, str] = {}  # origem_id -> "bot" | "conta" | "sem acesso"
 
         r = db.get_repasse(repasse_id) if repasse_id else None
         self.title("Editar Repasse" if r else "Novo Repasse")
@@ -63,6 +64,10 @@ class RepasseDialog(ctk.CTkToplevel):
         grade.grid_columnconfigure((0, 1), weight=1, uniform="col")
         self._lbl_origens = self._bloco_lista(grade, 0, "📥 Origens", "Escolher origens...", self._escolher_origens)
         self._lbl_destinos = self._bloco_lista(grade, 1, "📤 Destinos", "Escolher destinos...", self._escolher_destinos)
+        ctk.CTkLabel(sec, text="O bot só lê grupos e canais onde foi adicionado (em canal, como administrador). "
+                               "As demais origens são lidas pela conta, que nunca envia nada quando há bot.",
+                     font=F_PEQUENA, text_color=TEXTO_SEC, justify="left", wraplength=700).pack(anchor="w", padx=14,
+                                                                                              pady=(0, 12))
 
         sec = _secao(main, "Ofertas e afiliação")
         for linha_opts in [[("_f_aff", "Trocar links pelos meus links de afiliado"),
@@ -177,13 +182,30 @@ class RepasseDialog(ctk.CTkToplevel):
         self._render_listas()
 
     def _render_listas(self):
-        def resumo(nomes):
-            if not nomes:
-                return "Nenhum selecionado"
-            return "\n".join(f"• {n[:40]}" for n in nomes[:6]) + (f"\n… e mais {len(nomes) - 6}" if len(nomes) > 6 else "")
-        self._lbl_origens.configure(text=resumo([o["origem_nome"] for o in self._origens]))
-        self._lbl_destinos.configure(text=resumo([d["grupo_nome"] for d in self._destinos]))
+        self._render_origens()
+        self._lbl_destinos.configure(text=_resumo([d["grupo_nome"] for d in self._destinos]))
         self._render_subs()
+        self._verificar_leitura()
+
+    def _render_origens(self):
+        rotulos = {"bot": "Lida pelo bot", "conta": "Lida pela conta", "sem acesso": "Sem acesso"}
+        self._lbl_origens.configure(text=_resumo([
+            f"{o['origem_nome'][:32]} · {rotulos.get(self._leitura.get(str(o['origem_id'])), 'verificando…')}"
+            for o in self._origens]))
+
+    def _verificar_leitura(self):
+        """Quem lê cada origem (bot ou conta): consulta no loop do Telegram, resposta via after()."""
+        ids = [o["origem_id"] for o in self._origens if str(o["origem_id"]) not in self._leitura]
+        if not ids:
+            return
+
+        def _volta(res, _err):
+            def _ui():
+                if self.winfo_exists():
+                    self._leitura.update(res)
+                    self._render_origens()
+            self.after(0, _ui)
+        telegram_manager.leitura_origens(self._conta_map.get(self._conta_var.get()), ids, _volta)
 
     # ── Substituições ─────────────────────────────────────────────────────────
 
@@ -266,6 +288,12 @@ class RepasseDialog(ctk.CTkToplevel):
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
+def _resumo(nomes: list[str]) -> str:
+    if not nomes:
+        return "Nenhum selecionado"
+    return "\n".join(f"• {n[:60]}" for n in nomes[:6]) + (f"\n… e mais {len(nomes) - 6}" if len(nomes) > 6 else "")
+
 
 def _secao(parent, titulo: str):
     c = ctk.CTkFrame(parent, fg_color=CARD, corner_radius=12, border_width=1, border_color=BORDA)
