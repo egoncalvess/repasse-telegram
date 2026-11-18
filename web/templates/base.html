@@ -47,8 +47,14 @@
             <span class="badge badge-drop num">{{ motor.fila_pendente }}</span>
           {% endif %}
         </a>
+        <a href="/repasses" class="nav-item {% if pagina == 'repasses' %}is-active{% endif %}">
+          <span>Repasses</span>
+        </a>
         <a href="/buscas" class="nav-item {% if pagina == 'buscas' %}is-active{% endif %}">
           <span>Buscas &amp; Fontes</span>
+        </a>
+        <a href="/config" class="nav-item {% if pagina in ['config', 'contas', 'afiliados'] %}is-active{% endif %}">
+          <span>Configurações</span>
         </a>
       </nav>
       <div class="sidebar-footer">
@@ -93,12 +99,14 @@
       </div>
     </main>
 
-    <nav class="bottom-nav">
-      <a href="/" class="{% if pagina == 'comparador' %}is-active{% endif %}">Comparador</a>
+    <nav class="bottom-nav bottom-nav-5">
+      <a href="/" class="{% if pagina == 'comparador' %}is-active{% endif %}">Comparar</a>
       <a href="/ofertas" class="{% if pagina == 'ofertas' %}is-active{% endif %}">
         Ofertas{% if motor.fila_pendente > 0 %} ({{ motor.fila_pendente }}){% endif %}
       </a>
+      <a href="/repasses" class="{% if pagina == 'repasses' %}is-active{% endif %}">Repasses</a>
       <a href="/buscas" class="{% if pagina == 'buscas' %}is-active{% endif %}">Buscas</a>
+      <a href="/config" class="{% if pagina in ['config', 'contas', 'afiliados'] %}is-active{% endif %}">Ajustes</a>
     </nav>
   </div>
 {% endif %}

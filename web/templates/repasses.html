@@ -1,0 +1,151 @@
+{% extends "base.html" %}
+{% block title %}Repasses Automáticos — Promo do Baiano{% endblock %}
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1 class="page-title">Repasses Automáticos</h1>
+    <p class="page-subtitle">Encaminhe mensagens e ofertas entre canais do Telegram com troca automática de links de afiliado.</p>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header">
+    <h2 class="card-title">Criar Novo Repasse</h2>
+  </div>
+  <form method="post" action="/repasses" style="display:flex; flex-direction:column; gap:12px;">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    
+    <div>
+      <label class="label" for="nome">Nome do repasse</label>
+      <input type="text" id="nome" name="nome" class="input" placeholder="Ex.: Radar Ofertas &rarr; Meu Canal VIP" required>
+    </div>
+
+    <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(240px, 1fr)); gap:12px;">
+      <div>
+        <label class="label" for="origens">Canais / Grupos de Origem (1 por linha ou ID)</label>
+        <textarea id="origens" name="origens" class="input" placeholder="@canal_origem_1&#10;-1001234567890" rows="3"></textarea>
+      </div>
+      <div>
+        <label class="label" for="destinos">Canais / Grupos de Destino (1 por linha ou ID)</label>
+        <textarea id="destinos" name="destinos" class="input" placeholder="@meu_canal_promos&#10;-1009876543210" rows="3"></textarea>
+      </div>
+    </div>
+
+    <div class="switch-row">
+      <div class="switch-info">
+        <span class="switch-label">Substituir links de lojas pelos meus links de afiliado</span>
+        <span class="switch-desc">Reconhece Amazon, Mercado Livre, Shopee, Magalu e AliExpress, trocando as tags antes do envio.</span>
+      </div>
+      <input type="checkbox" name="substituir_afiliados" value="1" checked style="width:20px; height:20px; accent-color:var(--accent);">
+    </div>
+
+    <div class="switch-row">
+      <div class="switch-info">
+        <span class="switch-label">Bloquear envio se não houver tag de afiliado configurada</span>
+        <span class="switch-desc">Evita repassar links de concorrentes ou lojas sem afiliação cadastrada.</span>
+      </div>
+      <input type="checkbox" name="exigir_afiliado" value="1" style="width:20px; height:20px; accent-color:var(--accent);">
+    </div>
+
+    <div>
+      <label class="label" for="proibidas">Palavras proibidas (separadas por vírgula)</label>
+      <input type="text" id="proibidas" name="proibidas" class="input" placeholder="Ex.: grupo vip, rifa, sorteio, pix">
+    </div>
+
+    <div style="margin-top:6px;">
+      <button type="submit" class="btn btn-primary">Adicionar Repasse</button>
+    </div>
+  </form>
+</div>
+
+<h2 class="section-title">Repasses Configurados ({{ repasses|length }})</h2>
+{% if not repasses %}
+  <div class="empty-state">
+    <p>Nenhum repasse configurado ainda. Crie o primeiro acima para começar a encaminhar ofertas automaticamente.</p>
+  </div>
+{% else %}
+  <div style="display:flex; flex-direction:column; gap:14px;">
+    {% for r in repasses %}
+      <div class="card" style="margin-bottom:0;">
+        <div class="card-header" style="flex-wrap:wrap; gap:8px;">
+          <div>
+            <h3 class="card-title" style="display:inline; margin-right:8px;">{{ r.nome }}</h3>
+            {% if r.ativo %}
+              <span class="badge badge-drop">Ativo</span>
+            {% else %}
+              <span class="badge badge-warn">Pausado</span>
+            {% endif %}
+          </div>
+          <div class="inline-actions">
+            <form method="post" action="/repasses/{{ r.id }}/toggle" style="margin:0;">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+              <button type="submit" class="btn btn-sm {{ 'btn-secondary' if r.ativo else 'btn-primary' }}">
+                {{ 'Pausar' if r.ativo else 'Ativar' }}
+              </button>
+            </form>
+            <form method="post" action="/repasses/{{ r.id }}/remover" onsubmit="return confirm('Deseja realmente excluir este repasse?');" style="margin:0;">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+              <button type="submit" class="btn btn-sm btn-danger">Excluir</button>
+            </form>
+          </div>
+        </div>
+
+        <div class="kv-grid">
+          <div class="kv-item">
+            <span class="kv-label">Origens monitoradas</span>
+            <span class="kv-value">{{ r.origens|length }} canal(is)</span>
+          </div>
+          <div class="kv-item">
+            <span class="kv-label">Destinos de envio</span>
+            <span class="kv-value">{{ r.destinos|length }} canal(is)</span>
+          </div>
+          <div class="kv-item">
+            <span class="kv-label">Enviadas hoje</span>
+            <span class="kv-value">{{ r.enviadas_hoje }} msg</span>
+          </div>
+          <div class="kv-item">
+            <span class="kv-label">Total histórico</span>
+            <span class="kv-value">{{ r.total_enviadas or 0 }}</span>
+          </div>
+        </div>
+
+        {% if r.origens or r.destinos %}
+          <div style="font-size:12px; color:var(--ink-2); line-height:1.5; margin-top:8px;">
+            {% if r.origens %}
+              <div><strong>Origens:</strong> {{ r.origens|join(', ') }}</div>
+            {% endif %}
+            {% if r.destinos %}
+              <div><strong>Destinos:</strong> {{ r.destinos|join(', ') }}</div>
+            {% endif %}
+          </div>
+        {% endif %}
+      </div>
+    {% endfor %}
+  </div>
+{% endif %}
+
+<h2 class="section-title">Histórico Recente de Envios</h2>
+{% if not historico %}
+  <div class="empty-state">
+    <p>Nenhum envio registrado no histórico recente.</p>
+  </div>
+{% else %}
+  <div class="history-list">
+    {% for h in historico %}
+      <div class="history-item">
+        <div class="history-title">
+          <strong>{{ h.destino or 'Canal' }}</strong>: {{ h.detalhes or 'Mensagem encaminhada' }}
+        </div>
+        <div class="history-meta">
+          {% if h.status == 'ok' or h.status == 'enviado' %}
+            <span class="badge badge-drop">{{ h.status }}</span>
+          {% else %}
+            <span class="badge badge-danger">{{ h.status }}</span>
+          {% endif %}
+          <span>{{ h.data_hora }}</span>
+        </div>
+      </div>
+    {% endfor %}
+  </div>
+{% endif %}
+{% endblock %}

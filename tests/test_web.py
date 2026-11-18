@@ -313,3 +313,152 @@ def test_ofertas_fila_publicacao_sem_duplicar_sessao_e_crud_buscas(monkeypatch):
 
     client.post(f"/buscas/{bid}/remover", data={"csrf_token": csrf_b})
     assert db.get_busca(bid) is None
+
+
+
+# ── Fase 3: Administração Web (Repasses, Configurações, Contas, Afiliados) ────
+
+def test_fase3_repasses_crud_e_toggle():
+    client = _cliente_autenticado()
+    r = client.get("/repasses")
+    assert r.status_code == 200
+    assert "Repasses Automáticos" in r.text
+    csrf = _extrair_csrf(r.text)
+
+    # Criar repasse
+    r_post = client.post(
+        "/repasses",
+        data={
+            "nome": "Radar VIP",
+            "origens": "@canal_origem_1\n@canal_origem_2",
+            "destinos": "@canal_destino_1",
+            "substituir_afiliados": "1",
+            "exigir_afiliado": "1",
+            "proibidas": "pix, sorteio",
+            "csrf_token": csrf,
+        },
+        follow_redirects=True,
+    )
+    assert r_post.status_code == 200
+    assert "Repasse adicionado com sucesso" in r_post.text
+    repasses = db.listar_repasses()
+    assert len(repasses) == 1
+    rid = repasses[0]["id"]
+    assert (repasses[0].get("descricao") or repasses[0].get("nome")) == "Radar VIP"
+    assert len(db.listar_origens(rid)) == 2
+    assert len(db.listar_destinos(rid)) == 1
+
+    # Toggle ativo/pausa
+    csrf_rep = _extrair_csrf(r_post.text)
+    client.post(f"/repasses/{rid}/toggle", data={"csrf_token": csrf_rep})
+    assert db.get_repasse(rid)["ativo"] == 0
+
+    client.post(f"/repasses/{rid}/toggle", data={"csrf_token": csrf_rep})
+    assert db.get_repasse(rid)["ativo"] == 1
+
+    # Remover
+    client.post(f"/repasses/{rid}/remover", data={"csrf_token": csrf_rep})
+    assert db.get_repasse(rid) is None
+
+
+def test_fase3_config_pausa_piloto_e_senha():
+    client = _cliente_autenticado("minhaSenha123")
+    r = client.get("/config")
+    assert r.status_code == 200
+    assert "Configurações do Sistema" in r.text
+    csrf = _extrair_csrf(r.text)
+
+    # Pausa global
+    assert db.get_config("pausado", "0") == "0"
+    client.post("/config/pausa", data={"csrf_token": csrf})
+    assert db.get_config("pausado") == "1"
+    client.post("/config/pausa", data={"csrf_token": csrf})
+    assert db.get_config("pausado") == "0"
+
+    # Piloto Automático
+    client.post(
+        "/config/piloto",
+        data={
+            "piloto_ativo": "1",
+            "piloto_auto_aprovar": "1",
+            "piloto_desconto_minimo": "20",
+            "piloto_intervalo_minutos": "45",
+            "csrf_token": csrf,
+        },
+        follow_redirects=True,
+    )
+    assert db.get_config("piloto_ativo") == "1"
+    assert db.get_config("piloto_auto_aprovar") == "1"
+    assert db.get_config("piloto_desconto_minimo") == "20"
+    assert db.get_config("piloto_intervalo_minutos") == "45"
+
+    # Alterar senha com erro (senha atual errada)
+    r_err = client.post(
+        "/config/senha",
+        data={
+            "senha_atual": "senhaErrada",
+            "nova_senha": "novaSenha456",
+            "confirma_senha": "novaSenha456",
+            "csrf_token": csrf,
+        },
+        follow_redirects=True,
+    )
+    assert "Senha atual incorreta" in r_err.text
+    assert auth.verificar_senha_web("minhaSenha123") is True
+
+    # Alterar senha com sucesso
+    r_ok = client.post(
+        "/config/senha",
+        data={
+            "senha_atual": "minhaSenha123",
+            "nova_senha": "novaSenha456",
+            "confirma_senha": "novaSenha456",
+            "csrf_token": csrf,
+        },
+        follow_redirects=True,
+    )
+    assert "Senha Web atualizada com sucesso" in r_ok.text
+    assert auth.verificar_senha_web("novaSenha456") is True
+
+
+def test_fase3_contas_e_afiliados():
+    client = _cliente_autenticado()
+
+    # Contas
+    r_contas = client.get("/contas")
+    assert r_contas.status_code == 200
+    assert "Contas do Telegram" in r_contas.text
+
+    # Afiliados
+    r_af = client.get("/afiliados")
+    assert r_af.status_code == 200
+    assert "Programas de Afiliados" in r_af.text
+    csrf = _extrair_csrf(r_af.text)
+
+    # Salvar tags
+    r_save = client.post(
+        "/afiliados/salvar",
+        data={
+            "tag_amazon": "minhatag-20",
+            "tag_mercadolivre": "https://mercadolivre.com/sec/xyz?matt_word=promobaiano&matt_tool=12345",
+            "tag_shopee": "shopee_app_id:shopee_secret",
+            "tag_magalu": "promosdobai",
+            "tag_aliexpress": "ali_track_01",
+            "csrf_token": csrf,
+        },
+        follow_redirects=True,
+    )
+    assert r_save.status_code == 200
+    assert "Tags de afiliado salvas com sucesso" in r_save.text
+    ints = {i["tipo"]: i["tag"] for i in db.listar_integracoes()}
+    assert ints["amazon"] == "minhatag-20"
+    assert "matt_word=promobaiano" in ints["mercadolivre"]
+
+    # Testar link
+    r_teste = client.post(
+        "/afiliados/testar",
+        data={"url_teste": "https://www.amazon.com.br/dp/B08N5WRWNW", "csrf_token": csrf},
+        follow_redirects=True,
+    )
+    assert r_teste.status_code == 200
+    assert "tag=minhatag-20" in r_teste.text

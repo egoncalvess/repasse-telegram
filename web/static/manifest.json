@@ -17,5 +17,22 @@
       "sizes": "512x512",
       "type": "image/png"
     }
+  ],
+  "shortcuts": [
+    {
+      "name": "Comparar Preços",
+      "short_name": "Comparar",
+      "url": "/"
+    },
+    {
+      "name": "Ofertas do Dia",
+      "short_name": "Ofertas",
+      "url": "/ofertas"
+    },
+    {
+      "name": "Repasses",
+      "short_name": "Repasses",
+      "url": "/repasses"
+    }
   ]
 }

@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+{% block title %}Tags de Afiliado — Promo do Baiano{% endblock %}
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1 class="page-title">Programas de Afiliados</h1>
+    <p class="page-subtitle">Cadastre suas tags e credenciais para monetizar automaticamente todos os repasses e ofertas.</p>
+  </div>
+</div>
+
+<div class="subnav">
+  <a href="/config">Geral &amp; Piloto</a>
+  <a href="/contas">Contas Telegram</a>
+  <a href="/afiliados" class="is-active">Tags de Afiliado</a>
+</div>
+
+<div class="card">
+  <div class="card-header">
+    <h2 class="card-title">Testador de Conversão de Links ao Vivo</h2>
+  </div>
+  <form method="post" action="/afiliados/testar" style="display:flex; flex-direction:column; gap:12px;">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+
+    <div>
+      <label class="label" for="url_teste">Cole qualquer link de loja (original ou de concorrente)</label>
+      <input type="url" id="url_teste" name="url_teste" class="input" placeholder="https://www.amazon.com.br/dp/... ou https://mercadolivre.com/..." value="{{ url_teste or '' }}" required>
+    </div>
+
+    <div>
+      <button type="submit" class="btn btn-secondary">Testar Conversão Agora</button>
+    </div>
+  </form>
+
+  {% if resultado_teste %}
+    <div style="margin-top:16px; padding:12px; background:var(--bg); border:1px solid var(--border); border-radius:var(--radius);">
+      <div style="font-size:12px; font-weight:600; color:var(--ink-2); margin-bottom:4px;">Resultado do teste:</div>
+      <div style="font-size:13px; line-height:1.5;">
+        <div><strong>Loja detectada:</strong> {{ resultado_teste.loja or 'Desconhecida' }}</div>
+        {% if resultado_teste.sucesso %}
+          <div style="color:var(--drop); margin-top:4px;"><strong>Link convertido com sua tag:</strong></div>
+          <a href="{{ resultado_teste.url_convertida }}" target="_blank" rel="noopener noreferrer" style="word-break:break-all; font-weight:600;">
+            {{ resultado_teste.url_convertida }}
+          </a>
+        {% else %}
+          <div style="color:var(--danger); margin-top:4px;">
+            <strong>Aviso:</strong> {{ resultado_teste.msg or 'Não foi possível converter. Verifique a tag cadastrada para esta loja.' }}
+          </div>
+        {% endif %}
+      </div>
+    </div>
+  {% endif %}
+</div>
+
+<div class="card">
+  <div class="card-header">
+    <h2 class="card-title">Tags e Credenciais por Loja</h2>
+  </div>
+  <form method="post" action="/afiliados/salvar" style="display:flex; flex-direction:column; gap:16px;">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+
+    <div>
+      <label class="label" for="tag_amazon">Amazon Associates (Tag de rastreamento)</label>
+      <input type="text" id="tag_amazon" name="tag_amazon" class="input" placeholder="Ex.: baianopromos-20" value="{{ tags.amazon or '' }}">
+      <span style="font-size:11px; color:var(--ink-2);">Substitui automaticamente o parâmetro tag= em links amazon.com.br e amzn.to.</span>
+    </div>
+
+    <div>
+      <label class="label" for="tag_mercadolivre">Mercado Livre Afiliados (Link completo do Portal ou Parâmetros)</label>
+      <input type="text" id="tag_mercadolivre" name="tag_mercadolivre" class="input" placeholder="Cole qualquer link completo gerado no Portal do Afiliado ML" value="{{ tags.mercadolivre or '' }}">
+      <span style="font-size:11px; color:var(--ink-2);">O sistema extrai matt_word e matt_tool para reconstruir links canônicos com a sua comissão.</span>
+    </div>
+
+    <div>
+      <label class="label" for="tag_shopee">Shopee Afiliados (App ID : API Secret)</label>
+      <input type="text" id="tag_shopee" name="tag_shopee" class="input" placeholder="Ex.: 123456789:abcdef123456..." value="{{ tags.shopee or '' }}">
+      <span style="font-size:11px; color:var(--ink-2);">A Shopee exige a API oficial de afiliados para gerar links comissionados com segurança.</span>
+    </div>
+
+    <div>
+      <label class="label" for="tag_magalu">Magazine Luiza (Sua Loja Magazine Você)</label>
+      <input type="text" id="tag_magalu" name="tag_magalu" class="input" placeholder="Ex.: magazineluizasp / magazinevoce.com.br/magazine..." value="{{ tags.magalu or '' }}">
+    </div>
+
+    <div>
+      <label class="label" for="tag_aliexpress">AliExpress Portals (Tracking ID)</label>
+      <input type="text" id="tag_aliexpress" name="tag_aliexpress" class="input" placeholder="Ex.: baiano_ali" value="{{ tags.aliexpress or '' }}">
+    </div>
+
+    <div style="margin-top:8px;">
+      <button type="submit" class="btn btn-primary">Salvar Todas as Tags</button>
+    </div>
+  </form>
+</div>
+{% endblock %}

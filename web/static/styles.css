@@ -36,6 +36,7 @@
   --accent-hover: #759EFF;
   --drop: #3CCB8F;
   --danger: #F2645A;
+  --warn: #E5A93B;
   --hover-subtle: rgba(232, 234, 238, 0.05);
   --selected: rgba(91, 140, 255, 0.12);
   --radius: 6px;
@@ -51,6 +52,7 @@
   --accent-hover: #1A42B0;
   --drop: #0E8A5F;
   --danger: #C62828;
+  --warn: #B45309;
   --hover-subtle: rgba(26, 29, 35, 0.045);
   --selected: rgba(31, 79, 209, 0.10);
 }
@@ -633,6 +635,16 @@ select.input:focus {
   color: var(--danger);
 }
 
+.badge-warn {
+  border-color: var(--warn);
+  color: var(--warn);
+}
+
+.badge-neutral {
+  border-color: var(--border);
+  color: var(--ink-2);
+}
+
 .status-line {
   display: inline-flex;
   align-items: center;
@@ -763,4 +775,213 @@ select.input:focus {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 24px;
+}
+
+
+/* ── Fase 3: Navegação 5 abas, Subnav, 2FA, Grade KV e Acessibilidade ────── */
+
+.bottom-nav.bottom-nav-5 {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.bottom-nav.bottom-nav-5 a {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 0 2px;
+  min-height: 54px;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  letter-spacing: -0.02em;
+}
+
+@media (max-width: 380px) {
+  .bottom-nav.bottom-nav-5 a {
+    font-size: 10px;
+    padding: 0 1px;
+  }
+}
+
+.subnav {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+  padding-bottom: 4px;
+  margin-bottom: 18px;
+  border-bottom: 1px solid var(--border);
+}
+
+.subnav::-webkit-scrollbar {
+  display: none;
+}
+
+.subnav a,
+.subnav .subnav-item {
+  padding: 8px 12px 10px;
+  font-size: 13px;
+  color: var(--ink-2);
+  border-bottom: 2px solid transparent;
+  white-space: nowrap;
+  margin-bottom: -5px;
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+
+.subnav a:hover,
+.subnav .subnav-item:hover {
+  color: var(--ink);
+}
+
+.subnav a.is-active,
+.subnav .subnav-item.is-active {
+  color: var(--ink);
+  font-weight: 600;
+  border-bottom-color: var(--accent);
+}
+
+textarea.input {
+  min-height: 84px;
+  resize: vertical;
+  line-height: 1.45;
+  font-family: inherit;
+}
+
+.switch-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.switch-row:last-child {
+  border-bottom: none;
+}
+
+.switch-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.switch-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.switch-desc {
+  font-size: 12px;
+  color: var(--ink-2);
+}
+
+.code-step {
+  background: var(--surface);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  padding: 16px;
+  margin-bottom: 18px;
+}
+
+.code-step-title {
+  margin: 0 0 8px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.code-step-desc {
+  margin: 0 0 14px;
+  font-size: 13px;
+  color: var(--ink-2);
+  line-height: 1.45;
+}
+
+.kv-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 8px;
+  margin: 12px 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.kv-item {
+  padding: 8px 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  display: flex;
+  flex-direction: column;
+}
+
+.kv-label {
+  font-size: 11px;
+  color: var(--ink-2);
+  line-height: 1.3;
+}
+
+.kv-value {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+  margin-top: 3px;
+  word-break: break-word;
+}
+
+.history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-variant-numeric: tabular-nums;
+}
+
+.history-item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  font-size: 12px;
+}
+
+.history-title {
+  font-weight: 500;
+  color: var(--ink);
+  flex: 1 1 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.history-meta {
+  color: var(--ink-2);
+  font-size: 11px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+
+a:focus-visible,
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

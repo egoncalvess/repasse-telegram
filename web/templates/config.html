@@ -1,0 +1,128 @@
+{% extends "base.html" %}
+{% block title %}Configurações — Promo do Baiano{% endblock %}
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1 class="page-title">Configurações do Sistema</h1>
+    <p class="page-subtitle">Ajustes gerais do motor, regras do Piloto Automático e segurança de acesso Web.</p>
+  </div>
+</div>
+
+<div class="subnav">
+  <a href="/config" class="is-active">Geral &amp; Piloto</a>
+  <a href="/contas">Contas Telegram</a>
+  <a href="/afiliados">Tags de Afiliado</a>
+</div>
+
+<div class="card" style="border-left: 4px solid {{ 'var(--danger)' if motor.pausado else 'var(--drop)' }};">
+  <div class="card-header">
+    <div>
+      <h2 class="card-title">Pausa Global de Operações</h2>
+      <p style="font-size:13px; color:var(--ink-2); margin:4px 0 0 0;">
+        {% if motor.pausado %}
+          <strong style="color:var(--danger)">PAUSADO:</strong> Nenhum repasse ou publicação automática está sendo enviado aos canais.
+        {% else %}
+          <strong style="color:var(--drop)">ATIVO:</strong> O motor está operando normalmente e encaminhando ofertas conforme configurado.
+        {% endif %}
+      </p>
+    </div>
+    <form method="post" action="/config/pausa" style="margin:0;">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button type="submit" class="btn {{ 'btn-primary' if motor.pausado else 'btn-danger' }}">
+        {{ 'Retomar Operações' if motor.pausado else 'Pausar Tudo Imediatamente' }}
+      </button>
+    </form>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header">
+    <h2 class="card-title">Regras do Piloto Automático</h2>
+  </div>
+  <form method="post" action="/config/piloto" style="display:flex; flex-direction:column; gap:12px;">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+
+    <div class="switch-row">
+      <div class="switch-info">
+        <span class="switch-label">Piloto Automático Ativo</span>
+        <span class="switch-desc">Varre buscas automáticas e o histórico para detectar quedas reais de preço nos últimos 90 dias.</span>
+      </div>
+      <input type="checkbox" name="piloto_ativo" value="1" {% if cfg.piloto_ativo == '1' %}checked{% endif %} style="width:20px; height:20px; accent-color:var(--accent);">
+    </div>
+
+    <div class="switch-row">
+      <div class="switch-info">
+        <span class="switch-label">Publicação Direta (sem passar pela fila)</span>
+        <span class="switch-desc">Quando desmarcado, as ofertas encontradas vão para a tela "Ofertas & Fila" aguardando seu clique de aprovação.</span>
+      </div>
+      <input type="checkbox" name="piloto_auto_aprovar" value="1" {% if cfg.piloto_auto_aprovar == '1' %}checked{% endif %} style="width:20px; height:20px; accent-color:var(--accent);">
+    </div>
+
+    <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:12px;">
+      <div>
+        <label class="label" for="piloto_desconto_minimo">Queda Mínima de Preço (%)</label>
+        <input type="number" step="1" min="5" max="90" id="piloto_desconto_minimo" name="piloto_desconto_minimo" class="input" value="{{ cfg.piloto_desconto_minimo or '15' }}">
+      </div>
+      <div>
+        <label class="label" for="piloto_intervalo_minutos">Intervalo de Varredura (minutos)</label>
+        <input type="number" step="5" min="5" max="1440" id="piloto_intervalo_minutos" name="piloto_intervalo_minutos" class="input" value="{{ cfg.piloto_intervalo_minutos or '30' }}">
+      </div>
+    </div>
+
+    <div style="margin-top:6px;">
+      <button type="submit" class="btn btn-primary">Salvar Ajustes do Piloto</button>
+    </div>
+  </form>
+</div>
+
+<div class="card">
+  <div class="card-header">
+    <h2 class="card-title">Credenciais Telegram (Ambiente Seguro)</h2>
+  </div>
+  <p style="font-size:13px; color:var(--ink-2); line-height:1.45; margin-bottom:12px;">
+    Por segurança cibernética, as chaves de API e tokens não são expostas em texto aberto nesta interface Web. Elas permanecem criptografadas e salvas no banco de dados local da máquina.
+  </p>
+  <div class="kv-grid">
+    <div class="kv-item">
+      <span class="kv-label">Telegram API ID</span>
+      <span class="kv-value">{{ creds_mascaradas.api_id }}</span>
+    </div>
+    <div class="kv-item">
+      <span class="kv-label">Telegram API Hash</span>
+      <span class="kv-value">{{ creds_mascaradas.api_hash }}</span>
+    </div>
+    <div class="kv-item">
+      <span class="kv-label">Bot Token</span>
+      <span class="kv-value">{{ creds_mascaradas.bot_token }}</span>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header">
+    <h2 class="card-title">Alterar Senha de Acesso Web</h2>
+  </div>
+  <form method="post" action="/config/senha" style="display:flex; flex-direction:column; gap:12px; max-width:420px;">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+
+    <div>
+      <label class="label" for="senha_atual">Senha Atual</label>
+      <input type="password" id="senha_atual" name="senha_atual" class="input" required autocomplete="current-password">
+    </div>
+
+    <div>
+      <label class="label" for="nova_senha">Nova Senha (mínimo 6 caracteres)</label>
+      <input type="password" id="nova_senha" name="nova_senha" class="input" minlength="6" required autocomplete="new-password">
+    </div>
+
+    <div>
+      <label class="label" for="confirma_senha">Confirmar Nova Senha</label>
+      <input type="password" id="confirma_senha" name="confirma_senha" class="input" minlength="6" required autocomplete="new-password">
+    </div>
+
+    <div style="margin-top:6px;">
+      <button type="submit" class="btn btn-secondary">Atualizar Senha Web</button>
+    </div>
+  </form>
+</div>
+{% endblock %}

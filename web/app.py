@@ -812,3 +812,435 @@ async def retomar_fonte_web(fonte_id: str, request: Request, csrf_token: str = F
         fontes.retomar(fonte_id)
         await asyncio.to_thread(db.liberar_endpoints, fonte_id)
     return RedirectResponse("/buscas?msg=Fonte+retomada.", status_code=303)
+
+
+# ── Fase 3: Administração Web (Repasses, Configurações, Contas, Afiliados) ────
+
+@app.get("/repasses", response_class=HTMLResponse)
+async def pagina_repasses(
+    request: Request,
+    msg: str = Query(""),
+    erro: str = Query(""),
+):
+    payload, resp = _sessao_ou_redirect(request)
+    if resp is not None:
+        return resp
+    brutos = await asyncio.to_thread(db.listar_repasses)
+    repasses = []
+    for r in brutos:
+        rid = r["id"]
+        origens = await asyncio.to_thread(db.listar_origens, rid)
+        destinos = await asyncio.to_thread(db.listar_destinos, rid)
+        enviadas = await asyncio.to_thread(db.enviadas_hoje, rid)
+        item = dict(r)
+        item["nome"] = r.get("descricao") or r.get("nome") or f"Repasse #{rid}"
+        item["total_enviadas"] = r.get("total", 0)
+        item["origens"] = [o.get("origem_nome") or o.get("origem_id") for o in origens]
+        item["destinos"] = [d.get("grupo_nome") or d.get("grupo_id") for d in destinos]
+        item["enviadas_hoje"] = enviadas
+        repasses.append(item)
+    historico = await asyncio.to_thread(db.listar_historico, limit=40)
+    return templates.TemplateResponse(
+        request,
+        "repasses.html",
+        _contexto_base(
+            request,
+            payload,
+            "repasses",
+            repasses=repasses,
+            historico=historico,
+            msg=msg,
+            erro=erro,
+        ),
+    )
+
+
+@app.post("/repasses")
+async def criar_repasse_web(
+    request: Request,
+    nome: str = Form(""),
+    origens: str = Form(""),
+    destinos: str = Form(""),
+    substituir_afiliados: str = Form(""),
+    exigir_afiliado: str = Form(""),
+    proibidas: str = Form(""),
+    csrf_token: str = Form(""),
+):
+    import json
+    payload, resp = _sessao_ou_redirect(request)
+    if resp is not None:
+        return resp
+    _exigir_csrf(request, payload, csrf_token)
+    limpo_nome = (nome or "").strip()
+    if not limpo_nome:
+        return RedirectResponse("/repasses?erro=Informe+o+nome+do+repasse.", status_code=303)
+
+    from telegram_manager import telegram_manager as tm
+    conta_id = next(iter(tm.clients), None)
+    if not conta_id:
+        contas = await asyncio.to_thread(db.listar_contas)
+        if contas:
+            conta_id = contas[0]["id"]
+
+    lista_origens = [x.strip() for x in (origens or "").splitlines() if x.strip()]
+    lista_destinos = [x.strip() for x in (destinos or "").splitlines() if x.strip()]
+    primeira_origem = lista_origens[0] if lista_origens else ""
+
+    filtros = {
+        "substituir_afiliados": bool(substituir_afiliados),
+        "exigir_afiliado": bool(exigir_afiliado),
+        "links": True,
+        "imagens": True,
+        "videos": True,
+        "audios": True,
+    }
+    dados = {
+        "descricao": limpo_nome,
+        "conta_id": conta_id,
+        "origem_id": primeira_origem,
+        "origem_nome": primeira_origem,
+        "filtros": json.dumps(filtros),
+        "substituicoes": "[]",
+        "delay": 1,
+        "limite_diario": 0,
+        "horario_inicio": "00:00",
+        "horario_fim": "00:00",
+        "termos_bloquear": (proibidas or "").strip(),
+        "termos_permitir": "",
+    }
+    rid = await asyncio.to_thread(db.adicionar_repasse, dados)
+    if lista_origens:
+        await asyncio.to_thread(
+            db.set_origens, rid, [{"origem_id": o, "origem_nome": o} for o in lista_origens]
+        )
+    if lista_destinos:
+        await asyncio.to_thread(
+            db.set_destinos, rid, [{"grupo_id": d, "grupo_nome": d} for d in lista_destinos]
+        )
+    return RedirectResponse("/repasses?msg=Repasse+adicionado+com+sucesso.", status_code=303)
+
+
+@app.post("/repasses/{repasse_id}/toggle")
+async def toggle_repasse_web(repasse_id: int, request: Request, csrf_token: str = Form("")):
+    payload, resp = _sessao_ou_redirect(request)
+    if resp is not None:
+        return resp
+    _exigir_csrf(request, payload, csrf_token)
+    r = await asyncio.to_thread(db.get_repasse, repasse_id)
+    if r:
+        novo = 0 if r.get("ativo") else 1
+        await asyncio.to_thread(db.toggle_repasse, repasse_id, novo)
+    return RedirectResponse("/repasses", status_code=303)
+
+
+@app.post("/repasses/{repasse_id}/remover")
+async def remover_repasse_web(repasse_id: int, request: Request, csrf_token: str = Form("")):
+    payload, resp = _sessao_ou_redirect(request)
+    if resp is not None:
+        return resp
+    _exigir_csrf(request, payload, csrf_token)
+    await asyncio.to_thread(db.remover_repasse, repasse_id)
+    return RedirectResponse("/repasses?msg=Repasse+removido.", status_code=303)
+
+
+@app.get("/config", response_class=HTMLResponse)
+async def pagina_config(
+    request: Request,
+    msg: str = Query(""),
+    erro: str = Query(""),
+):
+    payload, resp = _sessao_ou_redirect(request)
+    if resp is not None:
+        return resp
+    cfg = {
+        "piloto_ativo": db.get_config("piloto_ativo", "0"),
+        "piloto_desconto_minimo": db.get_config("piloto_desconto_minimo", "15"),
+        "piloto_intervalo_minutos": db.get_config("piloto_intervalo_minutos", "30"),
+        "piloto_auto_aprovar": db.get_config("piloto_auto_aprovar", "0"),
+    }
+    api_id = str(db.get_config("telegram_api_id") or "").strip()
+    api_hash = str(db.get_config("telegram_api_hash") or "").strip()
+    bot_token = str(db.get_config("telegram_bot_token") or "").strip()
+    creds_mascaradas = {
+        "api_id": f"••••{api_id[-4:]}" if len(api_id) > 4 else ("••••" if api_id else "Não configurado"),
+        "api_hash": f"••••••••{api_hash[-4:]}" if len(api_hash) > 4 else ("••••" if api_hash else "Não configurado"),
+        "bot_token": f"••••••••{bot_token[-6:]}" if len(bot_token) > 6 else ("••••" if bot_token else "Não configurado"),
+    }
+    return templates.TemplateResponse(
+        request,
+        "config.html",
+        _contexto_base(
+            request,
+            payload,
+            "config",
+            subpagina="geral",
+            cfg=cfg,
+            creds_mascaradas=creds_mascaradas,
+            msg=msg,
+            erro=erro,
+        ),
+    )
+
+
+@app.post("/config/pausa")
+async def toggle_pausa_global(request: Request, csrf_token: str = Form("")):
+    payload, resp = _sessao_ou_redirect(request)
+    if resp is not None:
+        return resp
+    _exigir_csrf(request, payload, csrf_token)
+    atual = db.get_config("pausado", "0")
+    novo = "0" if atual == "1" else "1"
+    await asyncio.to_thread(db.set_config, "pausado", novo)
+    msg = "Pausa global ativada." if novo == "1" else "Operações retomadas."
+    return RedirectResponse(f"/config?{urlencode({'msg': msg})}", status_code=303)
+
+
+@app.post("/config/piloto")
+async def salvar_config_piloto(
+    request: Request,
+    piloto_ativo: str = Form(""),
+    piloto_auto_aprovar: str = Form(""),
+    piloto_desconto_minimo: int = Form(15),
+    piloto_intervalo_minutos: int = Form(30),
+    csrf_token: str = Form(""),
+):
+    payload, resp = _sessao_ou_redirect(request)
+    if resp is not None:
+        return resp
+    _exigir_csrf(request, payload, csrf_token)
+    await asyncio.to_thread(db.set_config, "piloto_ativo", "1" if piloto_ativo else "0")
+    await asyncio.to_thread(db.set_config, "piloto_auto_aprovar", "1" if piloto_auto_aprovar else "0")
+    await asyncio.to_thread(db.set_config, "piloto_desconto_minimo", str(max(5, int(piloto_desconto_minimo or 15))))
+    await asyncio.to_thread(db.set_config, "piloto_intervalo_minutos", str(max(5, int(piloto_intervalo_minutos or 30))))
+    return RedirectResponse("/config?msg=Configurações+do+Piloto+salvas.", status_code=303)
+
+
+@app.post("/config/senha")
+async def alterar_senha_web(
+    request: Request,
+    senha_atual: str = Form(""),
+    nova_senha: str = Form(""),
+    confirma_senha: str = Form(""),
+    csrf_token: str = Form(""),
+):
+    payload, resp = _sessao_ou_redirect(request)
+    if resp is not None:
+        return resp
+    _exigir_csrf(request, payload, csrf_token)
+    if not auth.verificar_senha_web(senha_atual):
+        return RedirectResponse("/config?erro=Senha+atual+incorreta.", status_code=303)
+    if (nova_senha or "").strip() != (confirma_senha or "").strip():
+        return RedirectResponse("/config?erro=A+nova+senha+e+a+confirma%C3%A7%C3%A3o+n%C3%A3o+conferem.", status_code=303)
+    if len((nova_senha or "").strip()) < 6:
+        return RedirectResponse("/config?erro=A+nova+senha+precisa+ter+pelo+menos+6+caracteres.", status_code=303)
+    auth.definir_senha_web(nova_senha.strip())
+    return RedirectResponse("/config?msg=Senha+Web+atualizada+com+sucesso.", status_code=303)
+
+
+@app.get("/contas", response_class=HTMLResponse)
+async def pagina_contas(
+    request: Request,
+    msg: str = Query(""),
+    erro: str = Query(""),
+):
+    payload, resp = _sessao_ou_redirect(request)
+    if resp is not None:
+        return resp
+    contas = await asyncio.to_thread(db.listar_contas)
+    from telegram_manager import telegram_manager as tm
+    pendente = None
+    for cid, (cl, ph) in list(tm._pending.items()):
+        pendente = {"conta_id": cid, "telefone": ph}
+        break
+    canais_radar = []
+    for c in contas:
+        if c.get("status") == "conectada":
+            try:
+                chats = await asyncio.to_thread(db.chats_do_radar, c["id"])
+                for cid, titulo in chats.items():
+                    canais_radar.append({"id": cid, "name": titulo})
+            except Exception:
+                pass
+    return templates.TemplateResponse(
+        request,
+        "contas.html",
+        _contexto_base(
+            request,
+            payload,
+            "contas",
+            subpagina="contas",
+            contas=contas,
+            pendente=pendente,
+            canais_radar=canais_radar,
+            msg=msg,
+            erro=erro,
+        ),
+    )
+
+
+@app.post("/contas/solicitar")
+async def solicitar_codigo_conta(
+    request: Request,
+    telefone: str = Form(""),
+    apelido: str = Form(""),
+    csrf_token: str = Form(""),
+):
+    payload, resp = _sessao_ou_redirect(request)
+    if resp is not None:
+        return resp
+    _exigir_csrf(request, payload, csrf_token)
+    tel = (telefone or "").strip()
+    ap = (apelido or tel).strip()
+    if not tel:
+        return RedirectResponse("/contas?erro=Informe+o+n%C3%BAmero+de+telefone.", status_code=303)
+
+    from telegram_manager import telegram_manager as tm
+    creds = tm.get_creds()
+    if not creds.get("api_id") or not creds.get("api_hash"):
+        return RedirectResponse("/contas?erro=Configure+telegram_api_id+e+telegram_api_hash+antes+de+conectar.", status_code=303)
+
+    conta_id = await asyncio.to_thread(db.adicionar_conta, tel, ap, "telegram")
+    try:
+        res = await tm._connect(conta_id, int(creds["api_id"]), creds["api_hash"], "", tel)
+        if res == "needs_code":
+            return RedirectResponse("/contas?msg=C%C3%B3digo+enviado+ao+Telegram.+Digite-o+abaixo.", status_code=303)
+        return RedirectResponse("/contas?msg=Conta+conectada+com+sucesso.", status_code=303)
+    except Exception as e:
+        return RedirectResponse(f"/contas?{urlencode({'erro': str(e)[:200]})}", status_code=303)
+
+
+@app.post("/contas/confirmar")
+async def confirmar_codigo_conta(
+    request: Request,
+    conta_id: int = Form(...),
+    codigo: str = Form(""),
+    senha_2fa: str = Form(""),
+    csrf_token: str = Form(""),
+):
+    payload, resp = _sessao_ou_redirect(request)
+    if resp is not None:
+        return resp
+    _exigir_csrf(request, payload, csrf_token)
+    cod = (codigo or "").strip()
+    if not cod:
+        return RedirectResponse("/contas?erro=Informe+o+c%C3%B3digo+de+verifica%C3%A7%C3%A3o.", status_code=303)
+
+    from telegram_manager import telegram_manager as tm
+    try:
+        await tm._sign_in(conta_id, cod, senha_2fa.strip() or None)
+        return RedirectResponse("/contas?msg=Conta+autenticada+e+conectada+com+sucesso.", status_code=303)
+    except Exception as e:
+        return RedirectResponse(f"/contas?{urlencode({'erro': str(e)[:200]})}", status_code=303)
+
+
+@app.post("/contas/{conta_id}/desconectar")
+async def desconectar_conta_web(conta_id: int, request: Request, csrf_token: str = Form("")):
+    payload, resp = _sessao_ou_redirect(request)
+    if resp is not None:
+        return resp
+    _exigir_csrf(request, payload, csrf_token)
+    from telegram_manager import telegram_manager as tm
+    await tm._disconnect(conta_id)
+    return RedirectResponse("/contas?msg=Conta+desconectada.", status_code=303)
+
+
+@app.post("/contas/{conta_id}/remover")
+async def remover_conta_web(conta_id: int, request: Request, csrf_token: str = Form("")):
+    payload, resp = _sessao_ou_redirect(request)
+    if resp is not None:
+        return resp
+    _exigir_csrf(request, payload, csrf_token)
+    from telegram_manager import telegram_manager as tm
+    await tm._disconnect(conta_id)
+    await asyncio.to_thread(db.remover_conta, conta_id)
+    return RedirectResponse("/contas?msg=Conta+removida.", status_code=303)
+
+
+@app.get("/afiliados", response_class=HTMLResponse)
+async def pagina_afiliados(
+    request: Request,
+    msg: str = Query(""),
+    erro: str = Query(""),
+    url_teste: str = Query(""),
+):
+    payload, resp = _sessao_ou_redirect(request)
+    if resp is not None:
+        return resp
+    integracoes = await asyncio.to_thread(db.listar_integracoes)
+    tags = {i["tipo"]: i.get("tag", "") for i in integracoes}
+    resultado_teste = None
+    if url_teste:
+        import affiliate_helper
+        try:
+            url_conv, nao_conv = await affiliate_helper.converter_links(url_teste)
+            loja = affiliate_helper.loja_da_url(url_teste)
+            sucesso = bool(url_conv and not nao_conv)
+            resultado_teste = {
+                "loja": (loja or "Não identificada").capitalize(),
+                "sucesso": sucesso,
+                "url_convertida": url_conv,
+                "msg": "Sem conversão oficial para esta URL/loja." if not sucesso else "",
+            }
+        except Exception as e:
+            resultado_teste = {"loja": "Erro", "sucesso": False, "msg": str(e)[:160]}
+
+    return templates.TemplateResponse(
+        request,
+        "afiliados.html",
+        _contexto_base(
+            request,
+            payload,
+            "afiliados",
+            subpagina="afiliados",
+            tags=tags,
+            url_teste=url_teste,
+            resultado_teste=resultado_teste,
+            msg=msg,
+            erro=erro,
+        ),
+    )
+
+
+@app.post("/afiliados/salvar")
+async def salvar_afiliados_web(
+    request: Request,
+    tag_amazon: str = Form(""),
+    tag_mercadolivre: str = Form(""),
+    tag_shopee: str = Form(""),
+    tag_magalu: str = Form(""),
+    tag_aliexpress: str = Form(""),
+    csrf_token: str = Form(""),
+):
+    payload, resp = _sessao_ou_redirect(request)
+    if resp is not None:
+        return resp
+    _exigir_csrf(request, payload, csrf_token)
+    lojas = {
+        "amazon": ("Amazon", tag_amazon),
+        "mercadolivre": ("Mercado Livre", tag_mercadolivre),
+        "shopee": ("Shopee", tag_shopee),
+        "magalu": ("Magalu", tag_magalu),
+        "aliexpress": ("AliExpress", tag_aliexpress),
+    }
+    atuais = {i["tipo"]: i for i in await asyncio.to_thread(db.listar_integracoes)}
+    for tipo, (nome, tag_val) in lojas.items():
+        v = (tag_val or "").strip()
+        if tipo in atuais:
+            await asyncio.to_thread(db.atualizar_integracao, atuais[tipo]["id"], nome, tipo, v, "")
+        elif v:
+            await asyncio.to_thread(db.adicionar_integracao, nome, tipo, v, "")
+    return RedirectResponse("/afiliados?msg=Tags+de+afiliado+salvas+com+sucesso.", status_code=303)
+
+
+@app.post("/afiliados/testar")
+async def testar_afiliado_web(
+    request: Request,
+    url_teste: str = Form(""),
+    csrf_token: str = Form(""),
+):
+    payload, resp = _sessao_ou_redirect(request)
+    if resp is not None:
+        return resp
+    _exigir_csrf(request, payload, csrf_token)
+    u = (url_teste or "").strip()
+    return RedirectResponse(f"/afiliados?{urlencode({'url_teste': u})}", status_code=303)

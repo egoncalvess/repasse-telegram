@@ -1,0 +1,133 @@
+{% extends "base.html" %}
+{% block title %}Contas Telegram — Promo do Baiano{% endblock %}
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1 class="page-title">Contas do Telegram</h1>
+    <p class="page-subtitle">Gerencie as contas conectadas para leitura de origens e publicação de ofertas sem duplicar sessões.</p>
+  </div>
+</div>
+
+<div class="subnav">
+  <a href="/config">Geral &amp; Piloto</a>
+  <a href="/contas" class="is-active">Contas Telegram</a>
+  <a href="/afiliados">Tags de Afiliado</a>
+</div>
+
+{% if pendente %}
+  <div class="code-step">
+    <h3 class="code-step-title">Etapa 2: Confirmar Código de Autenticação</h3>
+    <p class="code-step-desc">
+      O Telegram enviou um código de verificação para o seu aplicativo Telegram ou SMS no número <strong>{{ pendente.telefone }}</strong>. Digite-o abaixo para concluir a autorização.
+    </p>
+    <form method="post" action="/contas/confirmar" style="display:flex; flex-direction:column; gap:12px; max-width:440px;">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input type="hidden" name="conta_id" value="{{ pendente.conta_id }}">
+
+      <div>
+        <label class="label" for="codigo">Código recebido (5 dígitos)</label>
+        <input type="text" id="codigo" name="codigo" class="input" placeholder="Ex.: 12345" required autofocus style="font-size:18px; letter-spacing:2px; font-weight:700;">
+      </div>
+
+      <div>
+        <label class="label" for="senha_2fa">Senha 2FA (apenas se sua conta tiver Verificação em Duas Etapas)</label>
+        <input type="password" id="senha_2fa" name="senha_2fa" class="input" placeholder="Sua senha de duas etapas (se houver)">
+      </div>
+
+      <div style="margin-top:6px; display:flex; gap:10px;">
+        <button type="submit" class="btn btn-primary">Confirmar e Conectar</button>
+        <a href="/contas" class="btn btn-secondary">Cancelar</a>
+      </div>
+    </form>
+  </div>
+{% endif %}
+
+<div class="card">
+  <div class="card-header">
+    <h2 class="card-title">Conectar Nova Conta via Telegram</h2>
+  </div>
+  <form method="post" action="/contas/solicitar" style="display:flex; flex-direction:column; gap:12px; max-width:480px;">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+
+    <div>
+      <label class="label" for="telefone">Número de Telefone (com DDI e DDD)</label>
+      <input type="tel" id="telefone" name="telefone" class="input" placeholder="+5511999999999" required>
+    </div>
+
+    <div>
+      <label class="label" for="apelido">Apelido identificador</label>
+      <input type="text" id="apelido" name="apelido" class="input" placeholder="Ex.: Conta Pessoal / Chip Secundário" required>
+    </div>
+
+    <div style="margin-top:6px;">
+      <button type="submit" class="btn btn-primary">Enviar Código de Acesso</button>
+    </div>
+  </form>
+</div>
+
+<h2 class="section-title">Contas Cadastradas ({{ contas|length }})</h2>
+{% if not contas %}
+  <div class="empty-state">
+    <p>Nenhuma conta do Telegram conectada ainda. Conecte sua primeira conta acima para ler canais e automatizar repasses.</p>
+  </div>
+{% else %}
+  <div style="display:flex; flex-direction:column; gap:12px;">
+    {% for c in contas %}
+      <div class="card" style="margin-bottom:0;">
+        <div class="card-header" style="flex-wrap:wrap; gap:8px;">
+          <div>
+            <h3 class="card-title" style="display:inline; margin-right:8px;">{{ c.apelido }}</h3>
+            <span style="font-size:13px; color:var(--ink-2); margin-right:8px;">({{ c.telefone }})</span>
+            {% if c.status == 'conectada' %}
+              <span class="badge badge-drop">Conectada</span>
+            {% else %}
+              <span class="badge badge-neutral">Desconectada</span>
+            {% endif %}
+          </div>
+          <div class="inline-actions">
+            {% if c.status == 'conectada' %}
+              <form method="post" action="/contas/{{ c.id }}/desconectar" style="margin:0;">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <button type="submit" class="btn btn-sm btn-secondary">Desconectar</button>
+              </form>
+            {% endif %}
+            <form method="post" action="/contas/{{ c.id }}/remover" onsubmit="return confirm('Excluir esta conta permanentemente?');" style="margin:0;">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+              <button type="submit" class="btn btn-sm btn-danger">Remover</button>
+            </form>
+          </div>
+        </div>
+
+        <div class="kv-grid">
+          <div class="kv-item">
+            <span class="kv-label">ID da Conta</span>
+            <span class="kv-value">#{{ c.id }}</span>
+          </div>
+          <div class="kv-item">
+            <span class="kv-label">Tipo</span>
+            <span class="kv-value">{{ c.tipo or 'telegram' }}</span>
+          </div>
+          <div class="kv-item">
+            <span class="kv-label">Sessão salva</span>
+            <span class="kv-value">{{ 'Sim' if c.session else 'Não' }}</span>
+          </div>
+        </div>
+      </div>
+    {% endfor %}
+  </div>
+{% endif %}
+
+{% if canais_radar %}
+  <h2 class="section-title">Canais e Grupos no Radar ({{ canais_radar|length }})</h2>
+  <div class="card">
+    <div style="font-size:13px; color:var(--ink-2); line-height:1.5;">
+      {% for ch in canais_radar %}
+        <div style="padding:6px 0; border-bottom:1px solid var(--border); display:flex; justify-content:space-between;">
+          <strong>{{ ch.title or ch.name }}</strong>
+          <span style="color:var(--ink-2)">{{ ch.id }}</span>
+        </div>
+      {% endfor %}
+    </div>
+  </div>
+{% endif %}
+{% endblock %}
