@@ -71,6 +71,8 @@ def buscar_agora(termo: str, limite: int = 10) -> tuple[list, list[str]]:
     do maior desconto informado pela loja para o menor, e então do menor preço."""
     achados, erros = [], []
     for fonte in fontes.ativas():
+        if "termo" not in fonte.tipos_busca:
+            continue
         try:
             for p in fonte.buscar(Busca("termo", termo, limite)):
                 registrar_produto(fonte, p)

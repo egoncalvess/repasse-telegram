@@ -86,6 +86,9 @@ class MainWindow(ctk.CTk):
 
         self._rodape = ctk.CTkFrame(lat, fg_color="transparent")
         self._rodape.pack(side="bottom", fill="x", padx=e.E3, pady=e.E3)
+        atalho_web = ctk.CTkFrame(lat, fg_color="transparent")
+        atalho_web.pack(side="bottom", fill="x", padx=e.E3, pady=(0, e.E1))
+        e.botao(atalho_web, "Abrir Buscador Web", self._abrir_buscador_web, largura=e.LARGURA_LATERAL - 2 * e.E3).pack(fill="x")
         self._pontos: dict[str, e.PontoStatus] = {}
         self._pausa = e.rotulo(self._rodape, "", e.F_LEGENDA)
         self._pausa.configure(text_color=e.ERRO)
@@ -104,6 +107,9 @@ class MainWindow(ctk.CTk):
             bot = ("inativo", "Sem bot")
         itens = [("bot", *bot),
                  ("conta", "ok" if tm.clients else "inativo", "Conta conectada" if tm.clients else "Sem conta")]
+        if db.get_config("web_enabled", "1") == "1":
+            porta_web = db.get_config("web_port", "8080") or "8080"
+            itens.append(("web", "ok", f"Web :{porta_web}"))
         for f in fontes.registro().values():
             if not fontes.ativa(f.id):
                 continue
@@ -138,6 +144,13 @@ class MainWindow(ctk.CTk):
             print(f"[UI] Falha ao atualizar o status: {ex}")
         finally:
             self.after(5000, self._atualizar_status)
+
+
+    def _abrir_buscador_web(self):
+        import webbrowser
+        import database as db
+        porta = (db.get_config("web_port", "8080") or "8080").strip()
+        webbrowser.open(f"http://127.0.0.1:{porta}")
 
     # ── Conteúdo ─────────────────────────────────────────────────────────────
 

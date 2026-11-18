@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}Definir Senha Web — Promo do Baiano{% endblock %}
+{% block auth_content %}
+<div class="auth-page">
+  <div class="auth-card">
+    <div class="brand" style="margin-bottom:16px">
+      <img src="/assets/logo.png" alt="">
+      <span>Promo do Baiano</span>
+    </div>
+    <h1 class="page-title" style="margin-bottom:6px">Definir senha de acesso Web</h1>
+    <p class="page-subtitle" style="margin-bottom:18px">Crie uma senha (mínimo 6 caracteres) para usar o buscador no PC e no celular com segurança.</p>
+    {% if erro %}
+      <div class="alert alert-error">{{ erro }}</div>
+    {% endif %}
+    <form method="post" action="/setup-senha" style="display:flex; flex-direction:column; gap:12px">
+      <div class="field">
+        <label class="field-label" for="senha">Nova senha</label>
+        <input class="input" id="senha" name="senha" type="password" minlength="6" autocomplete="new-password" autofocus required>
+      </div>
+      <div class="field">
+        <label class="field-label" for="confirmar">Confirmar senha</label>
+        <input class="input" id="confirmar" name="confirmar" type="password" minlength="6" autocomplete="new-password" required>
+      </div>
+      <button type="submit" class="btn btn-primary">Salvar e abrir buscador</button>
+    </form>
+  </div>
+</div>
+{% endblock %}

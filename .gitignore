@@ -13,3 +13,8 @@ dist/
 
 # Cópia antiga do repositório aninhado
 repasse-telegram/
+
+# Variáveis de ambiente locais
+.env
+.env.*
+!.env.example

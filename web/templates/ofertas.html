@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+{% block title %}Ofertas & Fila — Promo do Baiano{% endblock %}
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1 class="page-title">Ofertas do Dia &amp; Fila do Piloto</h1>
+    <p class="page-subtitle">Quedas reais comprovadas pelo histórico ou preço original da loja.</p>
+  </div>
+</div>
+
+<div class="tabs">
+  <a href="/ofertas?aba=quedas" class="tab-link {% if aba == 'quedas' %}is-active{% endif %}">Quedas de hoje</a>
+  <a href="/ofertas?aba=fila" class="tab-link {% if aba == 'fila' %}is-active{% endif %}">
+    Fila de aprovação ({{ motor.fila_pendente }})
+  </a>
+</div>
+
+{% if aba == 'fila' %}
+  {% if fila %}
+    <div class="product-list">
+      {% for item in fila %}
+        <article class="product-row no-thumb">
+          <div class="product-info">
+            <a href="/produto?chave={{ item.chave | urlencode }}" class="product-title">{{ item.nome or item.chave }}</a>
+            <div class="product-meta num">
+              <span><strong>{{ item.loja or '—' }}</strong></span>
+              <span>· Na fila desde {{ item.criado_em }}</span>
+              {% if item.selo %}<span class="badge badge-drop">{{ item.selo }}</span>{% endif %}
+            </div>
+          </div>
+          <div class="price-block">
+            {% if item.preco_hoje %}<div class="price-main">{{ item.preco_hoje | brl }}</div>{% endif %}
+            <div class="inline-actions">
+              <form method="post" action="/ofertas/fila/{{ item.id }}/aprovar" style="margin:0">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <button type="submit" class="btn btn-primary btn-sm">Aprovar e publicar</button>
+              </form>
+              <form method="post" action="/ofertas/fila/{{ item.id }}/descartar" style="margin:0">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <button type="submit" class="btn btn-danger btn-sm">Descartar 24h</button>
+              </form>
+            </div>
+          </div>
+        </article>
+      {% endfor %}
+    </div>
+  {% else %}
+    <div class="empty-state">Nenhuma oferta aguardando aprovação manual na fila do Piloto.</div>
+  {% endif %}
+{% else %}
+  {% if quedas %}
+    <div class="product-list">
+      {% for p in quedas %}
+        {% set thumb = p.imagem | img_url %}
+        <article class="product-row {% if not thumb %}no-thumb{% endif %}">
+          {% if thumb %}
+            <img class="product-thumb" src="{{ thumb }}" alt="" loading="lazy">
+          {% endif %}
+          <div class="product-info">
+            <a href="/produto?chave={{ p.chave | urlencode }}" class="product-title">{{ p.nome }}</a>
+            <div class="product-meta num">
+              <span><strong>{{ p.loja }}</strong></span>
+              {% if p.selo %}<span class="badge badge-drop">{{ p.selo }}</span>{% endif %}
+            </div>
+          </div>
+          <div class="price-block">
+            <div>
+              {% if p.antes_ref %}<div class="price-old">{{ p.antes_ref | brl }}</div>{% endif %}
+              <div class="price-main">{{ p.preco_hoje | brl }}</div>
+            </div>
+            <div class="inline-actions">
+              <a class="btn btn-sm" href="/produto?chave={{ p.chave | urlencode }}">90d</a>
+              {% if p.publicavel %}
+                <form method="post" action="/produto/publicar" style="margin:0">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                  <input type="hidden" name="chave" value="{{ p.chave }}">
+                  <input type="hidden" name="retorno" value="/ofertas?aba=quedas">
+                  <button type="submit" class="btn btn-primary btn-sm">Publicar</button>
+                </form>
+              {% endif %}
+              <form method="post" action="/ofertas/descartar" style="margin:0">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <input type="hidden" name="chave" value="{{ p.chave }}">
+                <input type="hidden" name="aba" value="quedas">
+                <button type="submit" class="btn btn-sm">Ocultar 24h</button>
+              </form>
+            </div>
+          </div>
+        </article>
+      {% endfor %}
+    </div>
+  {% else %}
+    <div class="empty-state">Nenhuma oferta disponível hoje.</div>
+  {% endif %}
+{% endif %}
+{% endblock %}

@@ -172,6 +172,50 @@ def test_bot_configurado_e_offline_nao_envia_pela_conta():
     assert h["status"] == "Falha" and "offline" in h["detalhes"]
 
 
+def test_bot_resolve_id_sem_prefixo_como_canal_antes_de_usuario():
+    class Bot(Cliente):
+        async def get_entity(self, ident):
+            if ident == -1005047762967:
+                return SimpleNamespace(id=ident)
+            if isinstance(ident, int) and ident > 0:
+                return SimpleNamespace(id=ident)  # Telethon aceita o número como usuário, sem erro
+            raise ValueError(ident)
+
+    async def cenario():
+        tm = TelegramManager()
+        tm.bot = Bot(eh_bot=True)
+        await tm.enviar(None, "5047762967", "oferta")
+        return tm.bot
+
+    bot = asyncio.run(cenario())
+    assert bot.enviados[0][0] == -1005047762967
+
+
+def test_avisos_ao_admin_usam_o_endereco_salvo_quando_ele_fala_com_o_bot():
+    from telethon.tl.types import InputPeerUser
+
+    assert admin_panel.peer_admin() == ADMIN  # ainda não falou com o bot: só o ID
+
+    async def get_input_sender():
+        return InputPeerUser(ADMIN, 987654321)
+
+    asyncio.run(admin_panel._lembrar_admin(SimpleNamespace(get_input_sender=get_input_sender)))
+    assert admin_panel.peer_admin() == InputPeerUser(ADMIN, 987654321)
+
+    async def alerta():
+        tm = TelegramManager()
+        tm.bot = Cliente(eh_bot=True)
+        await autonomia.alertar(tm, "teste-peer", "fonte bloqueada")
+        return tm.bot
+
+    [(destino, texto, _, _)] = asyncio.run(alerta()).enviados
+    assert destino == InputPeerUser(ADMIN, 987654321)
+    assert "fonte bloqueada" in texto
+
+    db.set_config("bot_admin_id", "5151")  # admin trocado: o endereço salvo não vale para o novo
+    assert admin_panel.peer_admin() == 5151
+
+
 def test_parar_remove_os_ouvintes_do_bot_e_da_conta():
     async def cenario():
         conta_id, rid = criar_repasse(origens=("-1001", "-1009"))
@@ -306,3 +350,52 @@ def test_aprovar_publica_por_publicar_oferta_e_descartar_nao(monkeypatch):
     assert db.get_fila(a)["status"] == "aprovada" and db.get_fila(b)["status"] == "descartada"
     assert ("answer", "Já decidido.") in acionar(tm, f"p:fpub:{a}".encode())
     assert len(publicados) == 1
+
+
+# ── Servidor / VPS (WAL, DATA_DIR, variáveis de ambiente e shutdown limpo) ────
+
+def test_banco_ativa_wal_e_cria_subpastas(tmp_path, monkeypatch):
+    sub = tmp_path / "volume" / "aninhado" / "repasse.db"
+    monkeypatch.setattr(db, "DB_PATH", sub)
+    conn = db.get_conn()
+    try:
+        modo = conn.execute("PRAGMA journal_mode;").fetchone()[0]
+        assert modo.lower() == "wal"
+    finally:
+        conn.close()
+    assert sub.exists()
+
+
+def test_get_config_usa_variavel_de_ambiente_como_fallback(monkeypatch):
+    monkeypatch.setenv("TELEGRAM_API_ID", "987654")
+    monkeypatch.setenv("ML_CLIENT_ID", "ml-env-id")
+    assert db.get_config("api_id") == "987654"
+    assert db.get_config("ml_client_id") == "ml-env-id"
+    # Valor salvo no banco tem precedência sobre o ambiente
+    db.set_config("api_id", "111222")
+    assert db.get_config("api_id") == "111222"
+
+
+def test_encerrar_desconecta_contas_bot_e_cancela_tasks():
+    tm = TelegramManager()
+    desconectados = []
+
+    class ClienteDesc(Cliente):
+        def __init__(self, nome):
+            super().__init__()
+            self.nome = nome
+
+        async def disconnect(self):
+            desconectados.append(self.nome)
+
+    tm.clients[1] = ClienteDesc("conta-1")
+    tm.bot = ClienteDesc("bot")
+
+    async def tarefa_infinita():
+        await asyncio.sleep(3600)
+
+    fut = tm._run(tarefa_infinita())
+    tm.encerrar(timeout=5.0)
+    assert set(desconectados) == {"conta-1", "bot"}
+    assert tm.clients == {} and tm.bot is None
+    assert fut.cancelled() or fut.done()

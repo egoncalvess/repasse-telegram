@@ -14,6 +14,8 @@ PADROES = [
     ("shp", r"i\.(\d+)\.(\d+)|/product/(\d+)/(\d+)"),
     ("ali", r"/item/(\d+)\.html"),
     ("mgl", r"magazine(?:voce|luiza)\.com\.br/.*?/p/([a-z0-9]{6,})"),
+    ("cb",  r"casasbahia\.com\.br/.*?/p/(\d{5,})"),
+    ("fc",  r"ferreiracosta\.com/produto/(\d{4,})"),
 ]
 ENCURTADORES = ("amzn.to", "a.co/", "shope.ee", "s.shopee", "mercadolivre.com/sec/", "meli.la",
                 "meli.to", "mlb.link", "ml.link", "s.click.aliexpress", "onelink.me")

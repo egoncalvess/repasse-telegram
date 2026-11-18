@@ -42,6 +42,8 @@ class MinhaLoja(Fonte):
 
 - `endpoint` (2º argumento do `http.get`) é o **modelo** do caminho (`/produtos/{id}`), não a URL real:
   é por ele que o bloqueio, o circuit breaker e o log em `api_chamadas` funcionam.
+- `tipos_busca`: declare só os tipos que o acesso permite (ex.: `("categoria", "produto")` quando o robots.txt
+  proíbe a página de busca). A GUI recusa os outros e o `/buscar` do bot pula a fonte. Exemplo: `ferreiracosta.py`.
 - `preco_original` só quando a loja informa um preço "de" real e maior que o atual.
 - `chave` precisa bater com `dedup.chave_produto()` do link do mesmo produto postado num canal.
 

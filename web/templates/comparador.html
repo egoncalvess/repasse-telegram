@@ -1,0 +1,200 @@
+{% extends "base.html" %}
+{% block title %}Buscador & Comparador 90 dias — Promo do Baiano{% endblock %}
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1 class="page-title">Buscador &amp; Histórico de Preços</h1>
+    <p class="page-subtitle">Pesquise por produto em todas as lojas monitoradas ou cole o link de uma oferta para cruzar com 90 dias de histórico real.</p>
+  </div>
+</div>
+
+<section class="search-hero">
+  <form class="search-form" method="get" action="/">
+    <input class="input search-input" type="search" name="q" value="{{ q }}"
+           placeholder="Digite um produto (ex.: geladeira midea) ou cole o link da loja…" autofocus>
+    <button type="submit" class="btn btn-primary">Consultar histórico</button>
+  </form>
+  {% if buscas_ativas %}
+    <div class="chips">
+      {% for b in buscas_ativas %}
+        <a class="chip" href="/?q={{ b.valor | urlencode }}">{{ b.nome }}</a>
+      {% endfor %}
+    </div>
+  {% endif %}
+</section>
+
+{% if modo == 'link' %}
+  {% if aviso_link %}
+    <div class="alert">{{ aviso_link }}</div>
+  {% endif %}
+  {% if resultado_link %}
+    <section class="card">
+      <div class="card-header">
+        <div>
+          <span class="store-name">{{ resultado_link.loja }}</span>
+          <h2 class="card-title" style="margin-top:4px">{{ resultado_link.nome }}</h2>
+        </div>
+        <div class="inline-actions">
+          {% if resultado_link.no_minimo %}
+            <span class="badge badge-drop">Menor preço em {{ resultado_link.dias }}d</span>
+          {% elif resultado_link.vs_media_pct is not none and resultado_link.vs_media_pct < 0 %}
+            <span class="badge badge-drop num">{{ resultado_link.vs_media_pct }}% vs média</span>
+          {% endif %}
+          <a class="btn btn-sm" href="{{ resultado_link.url }}" target="_blank" rel="noopener">Abrir na loja</a>
+          <a class="btn btn-sm" href="/produto?chave={{ resultado_link.chave | urlencode }}">Detalhes</a>
+        </div>
+      </div>
+
+      <div class="stats-strip">
+        <div class="stat-item">
+          <div class="stat-label">Último preço lido</div>
+          <div class="price-main price-hero">{{ resultado_link.ultimo | brl }}</div>
+        </div>
+        <div class="stat-item">
+          <div class="stat-label">Menor em 90 dias</div>
+          <div class="stat-value" style="color:var(--drop)">{{ resultado_link.minimo | brl }}</div>
+        </div>
+        <div class="stat-item">
+          <div class="stat-label">Média de {{ resultado_link.dias }} dia(s)</div>
+          <div class="stat-value">{{ resultado_link.media | brl }}</div>
+        </div>
+        <div class="stat-item">
+          <div class="stat-label">Maior em 90 dias</div>
+          <div class="stat-value">{{ resultado_link.maximo | brl }}</div>
+        </div>
+      </div>
+
+      {% if svg_link %}
+        <div class="chart-box">{{ svg_link | safe }}</div>
+      {% endif %}
+    </section>
+  {% else %}
+    <div class="empty-state">Nenhum histórico encontrado ainda para este link.</div>
+  {% endif %}
+
+{% elif modo == 'termo' %}
+  <div class="card-header" style="margin-bottom:14px">
+    <div class="page-subtitle">
+      <strong style="color:var(--ink)" class="num">{{ resultado_termo.total }}</strong> produto(s) no histórico de 90 dias para <strong>"{{ q }}"</strong>
+    </div>
+    <form method="post" action="/comparar/ao-vivo" style="margin:0">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input type="hidden" name="termo" value="{{ q }}">
+      <button type="submit" class="btn">Buscar ao vivo nas lojas agora</button>
+    </form>
+  </div>
+
+  {% if resultado_termo.por_loja %}
+    <h2 class="section-title" style="margin-top:8px">Menor preço atual por loja</h2>
+    <div class="store-grid">
+      {% for loja, p in resultado_termo.por_loja.items() %}
+        <a class="store-card" href="/produto?chave={{ p.chave | urlencode }}">
+          <span class="store-name">{{ loja }}</span>
+          <span class="price-main">{{ p.ultimo | brl }}</span>
+          <span class="product-meta">{{ p.nome }}</span>
+          <span class="product-meta num">Mín 90d: {{ p.minimo | brl }} · {{ p.dias }}d</span>
+        </a>
+      {% endfor %}
+    </div>
+  {% endif %}
+
+  {% if resultado_termo.produtos %}
+    <h2 class="section-title">Comparação completa (menor para maior preço)</h2>
+    <div class="product-list">
+      {% for p in resultado_termo.produtos %}
+        {% set thumb = p.imagem | img_url %}
+        <article class="product-row {% if not thumb %}no-thumb{% endif %}">
+          {% if thumb %}
+            <img class="product-thumb" src="{{ thumb }}" alt="" loading="lazy">
+          {% endif %}
+          <div class="product-info">
+            <a href="/produto?chave={{ p.chave | urlencode }}" class="product-title">{{ p.nome }}</a>
+            <div class="product-meta num">
+              <span><strong>{{ p.loja }}</strong></span>
+              <span>· Mín 90d: {{ p.minimo | brl }}</span>
+              <span>· Média: {{ p.media | brl }}</span>
+              <span>· Máx: {{ p.maximo | brl }}</span>
+              <span>· {{ p.dias }}d vistos</span>
+              {% if p.no_minimo %}
+                <span class="badge badge-drop">Menor preço 90d</span>
+              {% elif p.vs_media_pct is not none and p.vs_media_pct <= -5 %}
+                <span class="badge badge-drop">{{ p.vs_media_pct }}% vs média</span>
+              {% endif %}
+            </div>
+          </div>
+          <div class="price-block">
+            <div class="price-main">{{ p.ultimo | brl }}</div>
+            <div class="inline-actions">
+              <a class="btn btn-sm" href="/produto?chave={{ p.chave | urlencode }}">Gráfico 90d</a>
+              <a class="btn btn-sm" href="{{ p.url }}" target="_blank" rel="noopener">Loja</a>
+            </div>
+          </div>
+        </article>
+      {% endfor %}
+    </div>
+  {% else %}
+    <div class="empty-state">
+      Nenhum item com "{{ q }}" no histórico ainda. Use o botão <strong>Buscar ao vivo nas lojas agora</strong> acima para consultar imediatamente nas fontes ativas.
+    </div>
+  {% endif %}
+
+{% else %}
+  <div class="stats-strip">
+    <div class="stat-item">
+      <div class="stat-label">Produtos no histórico</div>
+      <div class="stat-value">{{ resumo.produtos or 0 }}</div>
+    </div>
+    <div class="stat-item">
+      <div class="stat-label">Preços lidos hoje</div>
+      <div class="stat-value">{{ resumo.precos_hoje or 0 }}</div>
+    </div>
+    <div class="stat-item">
+      <div class="stat-label">Fila de aprovação</div>
+      <div class="stat-value">{{ motor.fila_pendente }}</div>
+    </div>
+    <div class="stat-item">
+      <div class="stat-label">Acesso no celular</div>
+      <div class="stat-value" style="font-size:13px; word-break:break-all">{{ motor.ip_local }}</div>
+    </div>
+  </div>
+
+  <h2 class="section-title">Maiores quedas reais vistas hoje</h2>
+  {% if quedas_hoje %}
+    <div class="product-list">
+      {% for p in quedas_hoje %}
+        {% set thumb = p.imagem | img_url %}
+        <article class="product-row {% if not thumb %}no-thumb{% endif %}">
+          {% if thumb %}
+            <img class="product-thumb" src="{{ thumb }}" alt="" loading="lazy">
+          {% endif %}
+          <div class="product-info">
+            <a href="/produto?chave={{ p.chave | urlencode }}" class="product-title">{{ p.nome }}</a>
+            <div class="product-meta num">
+              <span><strong>{{ p.loja }}</strong></span>
+              {% if p.minimo %}<span>· Mín anterior: {{ p.minimo | brl }}</span>{% endif %}
+              {% if p.media %}<span>· Média: {{ p.media | brl }}</span>{% endif %}
+              {% if p.queda_pct %}
+                <span class="badge badge-drop">-{{ p.queda_pct }}% comprovado</span>
+              {% endif %}
+            </div>
+          </div>
+          <div class="price-block">
+            <div>
+              {% if p.antes_ref %}
+                <div class="price-old">{{ p.antes_ref | brl }}</div>
+              {% endif %}
+              <div class="price-main">{{ p.preco_hoje | brl }}</div>
+            </div>
+            <div class="inline-actions">
+              <a class="btn btn-sm" href="/produto?chave={{ p.chave | urlencode }}">Histórico</a>
+              <a class="btn btn-sm" href="{{ p.url }}" target="_blank" rel="noopener">Loja</a>
+            </div>
+          </div>
+        </article>
+      {% endfor %}
+    </div>
+  {% else %}
+    <div class="empty-state">Nenhuma oferta observada hoje ainda. Pesquise um termo acima ou execute uma busca automática.</div>
+  {% endif %}
+{% endif %}
+{% endblock %}

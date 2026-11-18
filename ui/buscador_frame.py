@@ -11,7 +11,7 @@ from ui.fundo import em_segundo_plano
 
 TIPOS = {"Termo": "termo", "Categoria": "categoria", "Produto": "produto"}
 DICA_VALOR = {"termo": ("O que buscar", "air fryer 4 litros"),
-              "categoria": ("Código da categoria", "MLB1648"),
+              "categoria": ("Código ou link da categoria", "MLB1648 ou ferreiracosta.com/Categoria/…"),
               "produto": ("Link ou código do produto", "https://www.mercadolivre.com.br/…/p/MLB…")}
 
 
@@ -198,6 +198,10 @@ class BuscaDialog(ctk.CTkToplevel):
         fonte = self._fontes[self._fonte.get()]
         if intervalo < 5:
             messagebox.showwarning("Busca", "O intervalo mínimo é de 5 minutos.", parent=self)
+            return
+        if TIPOS[self._tipo.get()] not in fonte.tipos_busca:
+            aceitos = ", ".join(k for k, v in TIPOS.items() if v in fonte.tipos_busca)
+            messagebox.showwarning("Busca", f"{fonte.nome} só aceita busca por: {aceitos}.", parent=self)
             return
         dados = {"fonte_id": fonte.id, "nome": nome, "tipo": TIPOS[self._tipo.get()], "valor": valor,
                  "intervalo_min": intervalo, "desconto_min_pct": max(0.0, desconto), "preco_max": max(0.0, preco_max),

@@ -1,7 +1,13 @@
 import os
+import signal
 import sys
 import threading
+import time
 from pathlib import Path
+
+os.environ.setdefault("TZ", "America/Sao_Paulo")
+if hasattr(time, "tzset"):
+    time.tzset()
 
 import database as db
 
@@ -27,18 +33,22 @@ def main():
     db.init_db()
 
     if sys.stdout is None:  # pythonw / exe sem console: log em arquivo
-        log = open("data/app.log", "a", encoding="utf-8", buffering=1)
+        db.DATA_DIR.mkdir(parents=True, exist_ok=True)
+        log = open(db.DATA_DIR / "app.log", "a", encoding="utf-8", buffering=1)
         sys.stdout = sys.stderr = log
 
     import inicializacao
     if not inicializacao.garantir_instancia_unica():
         print("[App] Já existe uma instância aberta; encerrando esta.")
         if "--headless" not in sys.argv:
-            import tkinter as tk
-            from tkinter import messagebox
-            raiz = tk.Tk()
-            raiz.withdraw()
-            messagebox.showinfo("Repasse Telegram", "O app já está aberto (veja a barra de tarefas/bandeja).")
+            try:
+                import tkinter as tk
+                from tkinter import messagebox
+                raiz = tk.Tk()
+                raiz.withdraw()
+                messagebox.showinfo("Repasse Telegram", "O app já está aberto (veja a barra de tarefas/bandeja).")
+            except Exception:
+                pass
         return
 
     if "--headless" in sys.argv:
@@ -64,7 +74,12 @@ def main():
         app.iconify()
 
     _start_engine()
-    app.mainloop()
+    web_srv = _start_web()
+    try:
+        app.mainloop()
+    finally:
+        if web_srv is not None:
+            web_srv.should_exit = True
 
 
 def _start_engine():
@@ -77,13 +92,35 @@ def _start_engine():
     telegram_manager._run(autonomia.iniciar(telegram_manager))
 
 
-def _run_headless():
+def _run_headless(parar_evento: threading.Event | None = None):
     """Roda só o motor, sem interface (servidor/24h). Contas precisam ter sessão salva pela GUI."""
+    from telegram_manager import telegram_manager
+
+    parar = parar_evento or threading.Event()
+
+    def _ao_sinal(signum, _frame):
+        nome = signal.Signals(signum).name if hasattr(signal, "Signals") else str(signum)
+        print(f"[Headless] Sinal {nome} recebido; desconectando...")
+        parar.set()
+
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        try:
+            signal.signal(sig, _ao_sinal)
+        except (ValueError, OSError):
+            pass
+
     _start_engine()
-    print("[Headless] Motor ativo. Ctrl+C para encerrar.")
+    web_srv = _start_web()
+    print("[Headless] Motor ativo. Ctrl+C ou SIGTERM para encerrar.")
     try:
-        threading.Event().wait()
+        while not parar.is_set():
+            parar.wait(timeout=1.0)
     except KeyboardInterrupt:
+        print("[Headless] Interrompido; desconectando...")
+    finally:
+        if web_srv is not None:
+            web_srv.should_exit = True
+        telegram_manager.encerrar()
         print("[Headless] Encerrado.")
 
 
@@ -115,6 +152,28 @@ def _auto_reconnect():
             except Exception as e:
                 print(f"[Contas] Falha ao reconectar {conta['telefone']}: {e}")
 
+
+
+def _start_web():
+    """Sobe o servidor Web (FastAPI/Uvicorn) em thread única no mesmo processo (zero duplicação de StringSession)."""
+    if "--no-web" in sys.argv or db.get_config("web_enabled", "1") != "1":
+        return None
+    try:
+        import uvicorn
+        from web.auth import obter_ip_rede_local
+        host = (os.environ.get("WEB_HOST") or db.get_config("web_host", "0.0.0.0") or "0.0.0.0").strip()
+        port = int(os.environ.get("WEB_PORT") or db.get_config("web_port", "8080") or 8080)
+        cfg = uvicorn.Config("web.app:app", host=host, port=port, workers=1, log_level="warning", access_log=False)
+        server = uvicorn.Server(cfg)
+        server.install_signal_handlers = lambda: None
+        t = threading.Thread(target=server.run, name="web-uvicorn", daemon=True)
+        t.start()
+        ip_lan = obter_ip_rede_local()
+        print(f"[Web] Ativo em http://127.0.0.1:{port} · Rede local (celular): http://{ip_lan}:{port}")
+        return server
+    except Exception as e:
+        print(f"[Web] Falha ao iniciar servidor web: {e}")
+        return None
 
 if __name__ == "__main__":
     main()

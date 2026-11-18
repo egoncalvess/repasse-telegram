@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}Entrar — Promo do Baiano{% endblock %}
+{% block auth_content %}
+<div class="auth-page">
+  <div class="auth-card">
+    <div class="brand" style="margin-bottom:16px">
+      <img src="/assets/logo.png" alt="">
+      <span>Promo do Baiano</span>
+    </div>
+    <h1 class="page-title" style="margin-bottom:6px">Acesso ao Buscador</h1>
+    <p class="page-subtitle" style="margin-bottom:18px">Digite sua senha de acesso Web para consultar preços e operar o radar.</p>
+    {% if erro %}
+      <div class="alert alert-error">{{ erro }}</div>
+    {% endif %}
+    <form method="post" action="/login" style="display:flex; flex-direction:column; gap:12px">
+      <input type="hidden" name="next" value="{{ next }}">
+      <div class="field">
+        <label class="field-label" for="senha">Senha</label>
+        <input class="input" id="senha" name="senha" type="password" autocomplete="current-password" autofocus required>
+      </div>
+      <button type="submit" class="btn btn-primary">Entrar</button>
+    </form>
+  </div>
+</div>
+{% endblock %}

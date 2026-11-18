@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="pt-BR" data-theme="{{ tema }}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="{{ '#14161A' if tema == 'dark' else '#F7F8FA' }}">
+  <link rel="manifest" href="/static/manifest.json">
+  <link rel="icon" href="/assets/logo.ico">
+  <link rel="stylesheet" href="/static/styles.css">
+  <title>{% block title %}Promo do Baiano — Buscador de Preços{% endblock %}</title>
+</head>
+<body>
+{% if pagina == 'auth' %}
+  {% block auth_content %}{% endblock %}
+{% else %}
+  <div class="app-shell">
+    <header class="mobile-topbar">
+      <a href="/" class="brand">
+        <img src="/assets/logo.png" alt="">
+        <span>Promo do Baiano</span>
+      </a>
+      <div class="inline-actions">
+        <form method="post" action="/tema" style="margin:0">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <input type="hidden" name="retorno" value="{{ request.url.path }}">
+          <button type="submit" class="btn btn-sm" title="Alternar tema">{{ 'Claro' if tema == 'dark' else 'Escuro' }}</button>
+        </form>
+        <form method="post" action="/logout" style="margin:0">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <button type="submit" class="btn btn-sm">Sair</button>
+        </form>
+      </div>
+    </header>
+
+    <aside class="sidebar">
+      <a href="/" class="brand">
+        <img src="/assets/logo.png" alt="">
+        <span>Promo do Baiano</span>
+      </a>
+      <nav class="nav-list">
+        <a href="/" class="nav-item {% if pagina == 'comparador' %}is-active{% endif %}">
+          <span>Comparador 90d</span>
+        </a>
+        <a href="/ofertas" class="nav-item {% if pagina == 'ofertas' %}is-active{% endif %}">
+          <span>Ofertas &amp; Fila</span>
+          {% if motor.fila_pendente > 0 %}
+            <span class="badge badge-drop num">{{ motor.fila_pendente }}</span>
+          {% endif %}
+        </a>
+        <a href="/buscas" class="nav-item {% if pagina == 'buscas' %}is-active{% endif %}">
+          <span>Buscas &amp; Fontes</span>
+        </a>
+      </nav>
+      <div class="sidebar-footer">
+        <div class="status-line">
+          <span class="status-dot {{ 'status-ok' if motor.bot_online else 'status-warn' }}"></span>
+          <span>{{ 'Bot online' if motor.bot_online else 'Sem bot ativo' }}</span>
+        </div>
+        <div class="status-line">
+          <span class="status-dot {{ 'status-ok' if motor.contas_conectadas > 0 else 'status-warn' }}"></span>
+          <span>{{ motor.contas_conectadas }} conta(s) Telegram</span>
+        </div>
+        {% if motor.pausado %}
+          <div class="status-line" style="color:var(--danger)">
+            <span class="status-dot status-err"></span>
+            <span>Pausa global ativa</span>
+          </div>
+        {% endif %}
+        <div style="margin-top:4px; word-break:break-all;">Celular: {{ motor.ip_local }}</div>
+        <div class="inline-actions" style="margin-top:6px">
+          <form method="post" action="/tema" style="margin:0">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <input type="hidden" name="retorno" value="{{ request.url.path }}">
+            <button type="submit" class="btn btn-sm">{{ 'Tema claro' if tema == 'dark' else 'Tema escuro' }}</button>
+          </form>
+          <form method="post" action="/logout" style="margin:0">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <button type="submit" class="btn btn-sm">Sair</button>
+          </form>
+        </div>
+      </div>
+    </aside>
+
+    <main class="main-content">
+      <div class="container">
+        {% if msg %}
+          <div class="alert alert-ok">{{ msg }}</div>
+        {% endif %}
+        {% if erro %}
+          <div class="alert alert-error">{{ erro }}</div>
+        {% endif %}
+        {% block content %}{% endblock %}
+      </div>
+    </main>
+
+    <nav class="bottom-nav">
+      <a href="/" class="{% if pagina == 'comparador' %}is-active{% endif %}">Comparador</a>
+      <a href="/ofertas" class="{% if pagina == 'ofertas' %}is-active{% endif %}">
+        Ofertas{% if motor.fila_pendente > 0 %} ({{ motor.fila_pendente }}){% endif %}
+      </a>
+      <a href="/buscas" class="{% if pagina == 'buscas' %}is-active{% endif %}">Buscas</a>
+    </nav>
+  </div>
+{% endif %}
+</body>
+</html>

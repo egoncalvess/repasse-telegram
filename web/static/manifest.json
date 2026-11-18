@@ -1,0 +1,21 @@
+{
+  "name": "Promo do Baiano — Buscador de Preços",
+  "short_name": "Preços",
+  "description": "Buscador e comparador histórico de preços (90 dias) e operação do Radar.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#14161A",
+  "theme_color": "#14161A",
+  "icons": [
+    {
+      "src": "/assets/logo.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/assets/logo.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}

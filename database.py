@@ -1,15 +1,20 @@
+import os
 import sqlite3
 import json
 from pathlib import Path
 from datetime import datetime
 
-DB_PATH = Path("data/repasse.db")
+DATA_DIR = Path(os.environ.get("DATA_DIR", "data"))
+DB_PATH = DATA_DIR / "repasse.db"
 
 
 def get_conn():
-    DB_PATH.parent.mkdir(exist_ok=True)
-    conn = sqlite3.connect(DB_PATH)
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(DB_PATH, timeout=30.0)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL;")
+    conn.execute("PRAGMA synchronous=NORMAL;")
+    conn.execute("PRAGMA busy_timeout=30000;")
     return conn
 
 
@@ -95,6 +100,8 @@ def init_db():
             PRIMARY KEY (chave, visto_em)
         );
         CREATE INDEX IF NOT EXISTS idx_precos_visto ON precos(visto_em);
+        CREATE INDEX IF NOT EXISTS idx_precos_chave_visto ON precos(chave, visto_em);
+        CREATE INDEX IF NOT EXISTS idx_produtos_loja ON produtos(loja);
 
         -- Várias origens por repasse (antes era uma só, em repasses.origem_id)
         CREATE TABLE IF NOT EXISTS repasse_origens (
@@ -492,10 +499,28 @@ def listar_historico(repasse_id: int = None, limit: int = 200):
 
 # ── Config ───────────────────────────────────────────────────────────────────
 
+_ENV_ALIASES = {
+    "api_id": ("API_ID", "TELEGRAM_API_ID", "api_id"),
+    "api_hash": ("API_HASH", "TELEGRAM_API_HASH", "api_hash"),
+    "bot_token": ("BOT_TOKEN", "TELEGRAM_BOT_TOKEN", "bot_token"),
+    "bot_admin_id": ("BOT_ADMIN_ID", "TELEGRAM_ADMIN_ID", "bot_admin_id"),
+    "ml_client_id": ("ML_CLIENT_ID", "ml_client_id"),
+    "ml_client_secret": ("ML_CLIENT_SECRET", "ml_client_secret"),
+    "ml_redirect_uri": ("ML_REDIRECT_URI", "ml_redirect_uri"),
+    "ml_refresh_token": ("ML_REFRESH_TOKEN", "ml_refresh_token"),
+}
+
+
 def get_config(chave: str, default=None):
     conn = get_conn()
     row = conn.execute("SELECT valor FROM config WHERE chave=?", (chave,)).fetchone()
     conn.close()
+    if row and row["valor"] not in (None, ""):
+        return row["valor"]
+    for env_key in _ENV_ALIASES.get(chave, (chave.upper(), chave)):
+        val = os.environ.get(env_key)
+        if val not in (None, ""):
+            return val
     return row["valor"] if row else default
 
 
@@ -528,9 +553,26 @@ def registrar_preco(chave: str, nome: str, loja: str, url: str, preco: float, or
     """, (chave, nome, loja, url, imagem, agora, agora))
     conn.execute("INSERT OR IGNORE INTO precos (chave, preco, visto_em, origem, preco_original) VALUES (?, ?, ?, ?, ?)",
                  (chave, preco, agora, origem, preco_original))
-    conn.execute("DELETE FROM precos WHERE visto_em < date('now', 'localtime', '-180 days')")
     conn.commit()
     conn.close()
+
+
+def limpar_precos_antigos(dias: int = 180) -> int:
+    """Expurga observações de preço mais antigas que X dias fora do caminho crítico de gravação."""
+    conn = get_conn()
+    cur = conn.execute("DELETE FROM precos WHERE visto_em < date('now', 'localtime', ?)", (f"-{int(dias)} days",))
+    conn.commit()
+    removidos = cur.rowcount
+    conn.close()
+    return removidos
+
+
+def listar_nomes_produtos() -> list[tuple[str, str]]:
+    """Retorna [(chave, nome)] leve da tabela produtos para pré-filtro rápido no comparador."""
+    conn = get_conn()
+    rows = conn.execute("SELECT chave, nome FROM produtos").fetchall()
+    conn.close()
+    return [(r["chave"], r["nome"]) for r in rows]
 
 
 def tem_imagem(chave: str) -> bool:
@@ -829,6 +871,38 @@ def historico_precos(chave: str, dias: int = 90) -> list[tuple[str, float]]:
     """, (chave, f"-{int(dias)} days")).fetchall()
     conn.close()
     return [(r["dia"], r["preco"]) for r in rows]
+
+
+def estatisticas_precos(dias: int = 90, chaves=None) -> list[dict]:
+    """Por produto com preço nos últimos X dias: último preço visto, menor/maior/média dos menores preços
+    diários e em quantos dias houve observação. chaves=None: todos os produtos."""
+    if chaves is not None:
+        chaves = list(chaves)
+        if not chaves:
+            return []
+        if len(chaves) > 400:
+            out = []
+            for i in range(0, len(chaves), 400):
+                out.extend(estatisticas_precos(dias=dias, chaves=chaves[i:i + 400]))
+            return out
+    filtro = f"AND chave IN ({','.join('?' * len(chaves))})" if chaves else ""
+    conn = get_conn()
+    rows = conn.execute(f"""
+        WITH diario AS (
+            SELECT chave, date(visto_em) AS dia, MIN(preco) AS preco FROM precos
+            WHERE visto_em >= date('now', 'localtime', ?) {filtro} GROUP BY chave, dia),
+        ultimo AS (SELECT chave, MAX(visto_em) AS visto_em FROM precos
+                   WHERE visto_em >= date('now', 'localtime', ?) {filtro} GROUP BY chave)
+        SELECT p.chave, p.nome, p.loja, p.url, p.imagem, u.visto_em AS visto_por_ultimo,
+               (SELECT MIN(x.preco) FROM precos x WHERE x.chave = p.chave AND x.visto_em = u.visto_em) AS ultimo,
+               MIN(d.preco) AS minimo, MAX(d.preco) AS maximo, AVG(d.preco) AS media, COUNT(*) AS dias,
+               (SELECT d2.dia FROM diario d2 WHERE d2.chave = p.chave ORDER BY d2.preco, d2.dia DESC LIMIT 1)
+                   AS dia_minimo
+        FROM diario d JOIN ultimo u USING (chave) JOIN produtos p USING (chave)
+        GROUP BY p.chave
+    """, (f"-{int(dias)} days", *(chaves or ()), f"-{int(dias)} days", *(chaves or ()))).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
 
 
 def descartar(chave: str):

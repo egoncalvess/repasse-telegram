@@ -1,0 +1,26 @@
+# Controle de versão e CI
+.git
+.github
+.gitignore
+.gitattributes
+
+# Ambiente virtual, cache e artefatos de build
+.venv
+venv
+__pycache__
+*.pyc
+.pytest_cache
+build
+dist
+repasse-telegram
+
+# Dados locais e segredos (montados via volume em /app/data)
+data
+*.db
+*.db-shm
+*.db-wal
+*.session
+.env
+
+# Capturas de tela da documentação e interface desktop
+docs/telas

@@ -7,8 +7,9 @@ from pathlib import Path
 
 import database as db
 
-LOJAS = {"ml": "Mercado Livre", "amz": "Amazon", "shp": "Shopee", "ali": "AliExpress", "mgl": "Magalu"}
-PASTA_IMAGENS = Path("data/imagens")
+LOJAS = {"ml": "Mercado Livre", "amz": "Amazon", "shp": "Shopee", "ali": "AliExpress", "mgl": "Magalu",
+         "cb": "Casas Bahia", "fc": "Ferreira Costa"}
+PASTA_IMAGENS = db.DATA_DIR / "imagens"
 
 # R$ 1.234,56 | R$1234,56 | R$ 99 | R$ 99,9
 VALOR_RE = re.compile(r"R\$\s*(\d{1,3}(?:\.\d{3})+|\d+)(?:,(\d{1,2}))?")

@@ -9,6 +9,12 @@ import database as db
 
 DIAS_MIN_HISTORICO = 7   # só afirma "menor preço" com pelo menos esse histórico real
 JANELA_REPETIDA_H = 24   # não republica o mesmo produto dentro dessa janela
+# Lojas usadas só para histórico e comparação de preços (prefixo de dedup.PADROES): nunca publicadas.
+LOJAS_SO_HISTORICO = {"fc": "Ferreira Costa", "cb": "Casas Bahia", "mgl": "Magalu"}
+
+
+def publicavel(chave: str) -> bool:
+    return (chave or "").split(":")[0] not in LOJAS_SO_HISTORICO
 
 
 def brl(valor: float) -> str:
@@ -68,6 +74,8 @@ def publicar_oferta(chave: str, conta_id, destino: str, timeout: int = 60, orige
     """Publica o produto do radar (bot se ativo, senão conta). Bloqueante: chamar fora do loop asyncio."""
     from telegram_manager import telegram_manager
 
+    if not publicavel(chave):
+        raise RuntimeError(f"{LOJAS_SO_HISTORICO[chave.split(':')[0]]} é só para histórico de preços: não publica.")
     itens = db.menores_precos_do_dia(chave=chave, limit=1)
     if not itens:
         raise RuntimeError("Produto sem preço registrado hoje.")

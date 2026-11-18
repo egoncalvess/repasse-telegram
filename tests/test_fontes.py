@@ -316,3 +316,72 @@ def test_scraping_para_a_fonte_no_primeiro_bloqueio(resp):
     with pytest.raises(FonteBloqueada, match="pausada"):
         f.http.get("https://loja.exemplo/ofertas", "/ofertas")
     assert sessao.caminhos().count("/ofertas") == 1    # sem nova tentativa
+
+
+# ── Ferreira Costa (scraping) ─────────────────────────────────────────────────
+
+from fontes.ferreiracosta import FerreiraCosta  # noqa: E402
+
+ROBOTS_FC = Resp(200, None, {"Content-Type": "text/plain"},
+                 "User-agent: *\nAllow: /\nDisallow: /pesquisa/*\nDisallow: /busca/*\nDisallow: /*busca?*\n")
+
+
+def html_fixture(nome, status=200):
+    return Resp(status, None, {"Content-Type": "text/html; charset=utf-8"},
+                (FIXTURES / nome).read_text(encoding="utf-8"))
+
+
+def fc_com(rotas):
+    f = FerreiraCosta()
+    rel = Relogio()
+    sessao = Sessao({"/robots.txt": ROBOTS_FC} | rotas)
+    f.http = ClienteHTTP(f, sessao=sessao, relogio=rel, dormir=rel.dormir)
+    return f, sessao
+
+
+def test_fc_categoria_traz_preco_de_venda_e_preco_de_real():
+    fc, sessao = fc_com({"/Categoria/refrigeradores-conservadores-e-freezers": html_fixture("fc_categoria.html")})
+    res = fc.buscar(Busca("categoria", "https://www.ferreiracosta.com/Categoria/refrigeradores-conservadores-e-freezers"))
+    assert [p.chave for p in res] == ["fc:502444", "fc:500803", "fc:480985"]   # o sem preço fica de fora
+    p = res[0]
+    assert p.preco == 2919.9 and p.preco_original == 3339.9                    # salePrice / priceList, não o Pix
+    assert p.url == "https://www.ferreiracosta.com/produto/502444"
+    assert p.imagem_url.startswith("https://") and "/502444/" in p.imagem_url
+    assert p.nome.startswith("Geladeira/Refrigerador Midea") and p.loja == "Ferreira Costa"
+    assert all(c["headers"]["User-Agent"] == USER_AGENT for c in sessao.chamadas)
+    assert len(fc.buscar(Busca("categoria", "refrigeradores-conservadores-e-freezers", limite=2))) == 2
+
+
+def test_fc_produto_por_link_ou_codigo_e_reserva_no_json_ld():
+    fc, _ = fc_com({"/produto/658753": html_fixture("fc_produto.html")})
+    link = "https://www.ferreiracosta.com/produto/658753/geladeira-refrigerador-lg-inverter?utm_source=outro"
+    [p] = fc.buscar(Busca("produto", link))
+    assert p.chave == "fc:658753" == dedup.chave_produto(link)
+    assert p.preco == 5999.9 and p.preco_original == 6739.9
+    assert p.categoria == "refrigeradores-conservadores-e-freezers"
+    assert fc.buscar(Busca("produto", "658753"))[0].chave == "fc:658753"
+
+    fc, _ = fc_com({"/produto/658753": html_fixture("fc_produto_so_ld.html")})
+    [p] = fc.buscar(Busca("produto", "658753"))
+    assert p.preco == 5699.91 and p.preco_original == 6739.9 and p.nome.startswith("Geladeira")
+
+
+def test_fc_nao_busca_por_termo_e_buscar_agora_pula_a_fonte(monkeypatch):
+    fc, sessao = fc_com({})
+    with pytest.raises(ValueError, match="robots.txt"):
+        fc.buscar(Busca("termo", "geladeira"))
+    assert sessao.chamadas == []
+    import buscador
+    monkeypatch.setattr(fontes, "ativas", lambda: [fc])
+    assert buscador.buscar_agora("geladeira") == ([], [])
+
+
+def test_fc_bloqueio_do_site_pausa_a_fonte():
+    fc, sessao = fc_com({"/produto/1234": Resp(403, None, {"Content-Type": "text/html"}, "Forbidden")})
+    with pytest.raises(FonteBloqueada):
+        fc.buscar(Busca("produto", "1234"))
+    assert fontes.pausada("fc")
+    with pytest.raises(FonteBloqueada, match="pausada"):
+        fc.buscar(Busca("produto", "1234"))
+    assert sessao.caminhos().count("/produto/1234") == 1
+

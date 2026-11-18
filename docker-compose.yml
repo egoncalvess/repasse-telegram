@@ -1,0 +1,17 @@
+services:
+  repasse-telegram:
+    build: .
+    container_name: repasse-telegram
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      - TZ=America/Sao_Paulo
+      - DATA_DIR=/app/data
+      - WEB_HOST=0.0.0.0
+      - WEB_PORT=8080
+    ports:
+      - "${WEB_PORT:-8080}:8080"
+    volumes:
+      - ./data:/app/data

@@ -24,6 +24,7 @@ class ConfiguracoesFrame(ctk.CTkFrame):
         self._fontes_ui: dict[str, dict] = {}
         self._build_telegram()
         self._build_bot()
+        self._build_web()
         self._build_fontes()
         self._build_aparencia()
         self._build_inicializacao()
@@ -89,6 +90,8 @@ class ConfiguracoesFrame(ctk.CTkFrame):
         self._bot_teste_res = e.rotulo(sec, "", e.F_LEGENDA, wraplength=640)
         self._bot_teste_res.pack(anchor="w")
         self._atualizar_bot()
+        if hasattr(self, '_atualizar_web'):
+            self._atualizar_web()
 
     def _atualizar_bot(self, estado=None, texto=None):
         from telegram_manager import telegram_manager
@@ -274,6 +277,82 @@ class ConfiguracoesFrame(ctk.CTkFrame):
                                               "novo.", parent=self):
             f.desconectar()
             self._atualizar_fonte(f)
+
+    # ── Acesso Web (PC e Celular) ────────────────────────────────────────────
+
+    def _build_web(self):
+        from web import auth as web_auth
+        sec = e.secao(self._area, "Acesso Web")
+        e.paragrafo(sec, "Buscador e comparador histórico de preços (90 dias) no navegador do computador ou pelo "
+                         "celular conectado na mesma rede Wi-Fi.", pady=(0, e.E2))
+        self._web_var = ctk.BooleanVar(value=db.get_config("web_enabled", "1") == "1")
+        e.interruptor(sec, "Ativar buscador e painel Web ao abrir o aplicativo", self._web_var,
+                      lambda: db.set_config("web_enabled", "1" if self._web_var.get() else "0")).pack(
+            anchor="w", pady=(0, e.E2))
+
+        porta = db.get_config("web_port", "8080") or "8080"
+        self._web_porta = e.campo(sec, "Porta local", porta, largura=140, dica="8080")
+        self._web_senha = e.campo(sec, "Nova senha de acesso Web (mínimo 6 caracteres)", "", oculto=True,
+                                  dica="Deixe em branco para manter a senha atual")
+
+        ip_lan = web_auth.obter_ip_rede_local()
+        self._web_urls = e.rotulo(
+            sec,
+            f"No PC: http://127.0.0.1:{porta}   ·   No celular (mesmo Wi-Fi): http://{ip_lan}:{porta}",
+            e.F_LEGENDA,
+            secundario=True,
+        )
+        self._web_urls.pack(anchor="w", pady=(0, e.E2))
+
+        linha = ctk.CTkFrame(sec, fg_color="transparent")
+        linha.pack(anchor="w", pady=(0, e.E1))
+        e.botao(linha, "Salvar Acesso Web", self._salvar_web).pack(side="left")
+        e.botao(linha, "Abrir no navegador", self._abrir_web_local).pack(side="left", padx=(e.E1, 0))
+        e.botao(linha, "Copiar link do celular", self._copiar_link_celular).pack(side="left", padx=(e.E1, 0))
+
+        self._web_status = e.ponto_status(sec, "inativo", "", fonte=e.F_CORPO)
+        self._web_status.pack(anchor="w", pady=(e.E1, 0))
+        self._atualizar_web()
+
+    def _atualizar_web(self):
+        from web import auth as web_auth
+        porta = (db.get_config("web_port", "8080") or "8080").strip()
+        ip_lan = web_auth.obter_ip_rede_local()
+        self._web_urls.configure(
+            text=f"No PC: http://127.0.0.1:{porta}   ·   No celular (mesmo Wi-Fi): http://{ip_lan}:{porta}"
+        )
+        if web_auth.tem_senha_web():
+            self._web_status.atualizar("ok", "Senha Web configurada")
+        else:
+            self._web_status.atualizar("inativo", "Defina uma senha para liberar o acesso pelo celular")
+
+    def _salvar_web(self):
+        from web import auth as web_auth
+        porta = self._web_porta.get().strip()
+        senha = self._web_senha.get().strip()
+        if not porta.isdigit() or not (1024 <= int(porta) <= 65535):
+            messagebox.showwarning("Acesso Web", "Informe uma porta válida entre 1024 e 65535.", parent=self)
+            return
+        if senha and len(senha) < 6:
+            messagebox.showwarning("Acesso Web", "A senha Web precisa ter pelo menos 6 caracteres.", parent=self)
+            return
+        db.set_config("web_port", porta)
+        if senha:
+            web_auth.definir_senha_web(senha)
+            self._web_senha.delete(0, "end")
+        self._atualizar_web()
+
+    def _abrir_web_local(self):
+        porta = (db.get_config("web_port", "8080") or "8080").strip()
+        webbrowser.open(f"http://127.0.0.1:{porta}")
+
+    def _copiar_link_celular(self):
+        from web import auth as web_auth
+        porta = (db.get_config("web_port", "8080") or "8080").strip()
+        url = f"http://{web_auth.obter_ip_rede_local()}:{porta}"
+        self.clipboard_clear()
+        self.clipboard_append(url)
+        self._web_status.atualizar("ok", f"Copiado: {url}")
 
     # ── Aparência ────────────────────────────────────────────────────────────
 

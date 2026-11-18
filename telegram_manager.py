@@ -275,6 +275,14 @@ class TelegramManager:
         if ident_str.isdigit() or (ident_str.startswith("-") and ident_str[1:].isdigit()):
             try:
                 val = int(ident_str)
+                # Bot com ID salvo sem prefixo: o Telethon aceita o número como usuário sem erro e o envio
+                # falha ("bots cannot start conversations"). Destino de bot é canal/grupo: tenta esses antes.
+                if client is self.bot and val > 0:
+                    for marcado in (int(f"-100{val}"), -val):
+                        try:
+                            return await client.get_entity(marcado)
+                        except Exception:
+                            pass
                 # Tenta obter a entidade com o ID direto
                 try:
                     return await client.get_entity(val)
@@ -717,6 +725,33 @@ class TelegramManager:
                 callback([], str(e))
 
         self._run(self._listar_chats(conta_id)).add_done_callback(_done)
+
+    async def _shutdown(self):
+        """Cancela rotinas autônomas e desconecta todas as contas e o bot com segurança."""
+        atuais = [t for t in list(self._tasks) if t is not asyncio.current_task() and not t.done()]
+        for t in atuais:
+            t.cancel()
+        if atuais:
+            await asyncio.gather(*atuais, return_exceptions=True)
+        for conta_id, client in list(self.clients.items()):
+            try:
+                await client.disconnect()
+            except Exception as e:
+                print(f"[Shutdown] Erro ao desconectar conta {conta_id}: {e}")
+        self.clients.clear()
+        if self.bot:
+            try:
+                await self.bot.disconnect()
+            except Exception as e:
+                print(f"[Shutdown] Erro ao desconectar bot: {e}")
+            self.bot = None
+
+    def encerrar(self, timeout: float = 10.0):
+        """Encerra conexões Telethon de forma síncrona (chamado no SIGTERM/SIGINT)."""
+        try:
+            self._run(self._shutdown()).result(timeout=timeout)
+        except Exception as e:
+            print(f"[Shutdown] Aviso ao encerrar: {e}")
 
 
 # Singleton global

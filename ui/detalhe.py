@@ -159,6 +159,9 @@ class PainelDetalhe(ctk.CTkFrame):
             return
         p, hist = res
         self._p = p
+        from oferta import publicavel
+        if not publicavel(chave):
+            self._publicar.configure(text="Só histórico", state="disabled")
         antes, pct = queda(p)
         self._nome.configure(text=p["nome"])
         self._preco.configure(text=brl(p["preco_hoje"]))

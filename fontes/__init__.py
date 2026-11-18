@@ -19,8 +19,9 @@ def registro() -> dict[str, Fonte]:
     """id -> instância de cada fonte disponível no app."""
     global _registro
     if _registro is None:
+        from fontes.ferreiracosta import FerreiraCosta
         from fontes.mercadolivre import MercadoLivre
-        _registro = {f.id: f for f in (MercadoLivre(),)}
+        _registro = {f.id: f for f in (MercadoLivre(), FerreiraCosta())}
     return _registro
 
 

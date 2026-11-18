@@ -14,7 +14,7 @@ from pathlib import Path
 
 import database as db
 
-PASTA_BACKUP = Path("data/backups")
+PASTA_BACKUP = db.DATA_DIR / "backups"
 _ultimo_alerta: dict[str, float] = {}
 
 
@@ -37,10 +37,11 @@ async def alertar(tm, chave: str, texto: str, intervalo_s: int = 3600):
     if not (tm.bot and admin.isdigit()) or time.time() - _ultimo_alerta.get(chave, 0) < intervalo_s:
         return
     _ultimo_alerta[chave] = time.time()
+    from admin_panel import peer_admin
     try:
-        await tm.bot.send_message(int(admin), f"⚠️ {texto}")
+        await tm.bot.send_message(peer_admin(), f"⚠️ {texto}")
     except Exception as e:
-        print(f"[Alerta] Não foi possível avisar o admin: {e}")
+        print(f"[Alerta] Não foi possível avisar o admin: {e} (mande /status ao bot para ele te reconhecer)")
 
 
 # ── Piloto automático ─────────────────────────────────────────────────────────
@@ -55,7 +56,7 @@ def publicados_pelo_piloto_hoje() -> int:
 
 async def ciclo_piloto(tm) -> str:
     """Uma rodada do piloto. Retorna o que aconteceu (para log/painel)."""
-    from oferta import selo, publicar_oferta
+    from oferta import selo, publicar_oferta, publicavel
 
     if cfg("piloto_ativo", "0") != "1":
         return "desligado"
@@ -76,7 +77,7 @@ async def ciclo_piloto(tm) -> str:
     # 200: produtos novos das buscas (sem histórico, só com preço "de" da loja) ficam no fim da ordenação
     descartados = db.descartados()  # "Descartar" no app tira a oferta do piloto por 24 h
     candidatos = [p for p in db.menores_precos_do_dia(limit=200)
-                  if selo(p) and p["chave"] not in descartados and not db.ofertas_recentes({p["chave"]}, 24)
+                  if selo(p) and publicavel(p["chave"]) and p["chave"] not in descartados and not db.ofertas_recentes({p["chave"]}, 24)
                   and permite_publicar(p)]
     if aprovacao:
         import admin_panel
@@ -160,12 +161,16 @@ async def loop_manutencao(tm):
             arquivo = await asyncio.to_thread(backup_diario)
             if arquivo:
                 print(f"[Manutenção] Backup salvo em {arquivo}")
+                removidos = await asyncio.to_thread(db.limpar_precos_antigos, 180)
+                if removidos:
+                    print(f"[Manutenção] {removidos} preço(s) com mais de 180 dias expurgados.")
 
             hoje = datetime.now().strftime("%Y-%m-%d")
             admin = cfg("bot_admin_id", "")
             if (datetime.now().strftime("%H:%M") >= cfg("resumo_hora", "22:00")
                     and cfg("resumo_ultimo_dia", "") != hoje and tm.bot and admin.isdigit()):
-                await tm.bot.send_message(int(admin), texto_resumo(), parse_mode="html")
+                from admin_panel import peer_admin
+                await tm.bot.send_message(peer_admin(), texto_resumo(), parse_mode="html")
                 db.set_config("resumo_ultimo_dia", hoje)
         except Exception as e:
             print(f"[Manutenção] {e}")

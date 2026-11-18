@@ -49,6 +49,7 @@ class Fonte(ABC):
     nome: str = ""              # nome exibido ("Mercado Livre")
     loja: str = ""              # chave da loja em affiliate_helper.DOMINIOS ("mercadolivre")
     tipo: str = "api_oficial"   # api_oficial | scraping
+    tipos_busca: tuple = TIPOS_BUSCA  # os que a fonte aceita (ex.: sem "termo" se o robots.txt proíbe busca)
     req_por_minuto: int = 30    # teto de requisições (o ClienteHTTP espera para não passar disso)
     intervalo_min_padrao: int = 60  # intervalo sugerido entre execuções de uma busca
 
